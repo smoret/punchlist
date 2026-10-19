@@ -166,6 +166,27 @@ def format_issue(issue: Issue, config: Config) -> str:
     return text + "\n" + issue.body if issue.body else text
 
 
+def replace_field(text: str, config: Config, path: Path, name: str, value: str) -> str:
+    """`text` with one existing header field's value replaced and every other byte kept.
+
+    Editing the line in place, rather than re-serializing, keeps a hand-edited
+    file's field order and makes the diff one line. The result is parsed, so
+    an invalid value is an error.
+    """
+    lines: list[str] = text.split("\n")
+    try:
+        close: int = lines.index(DELIMITER, 1)
+    except ValueError:
+        raise PunchError(f"header has no closing {DELIMITER!r}", path, 1) from None
+    for index in range(1, close):
+        if lines[index].partition(": ")[0] == name:
+            lines[index] = f"{name}: {value}"
+            result: str = "\n".join(lines)
+            parse_issue(result, config, path)
+            return result
+    raise PunchError(f"no {name!r} field to replace", path)
+
+
 def read_issue(path: Path, config: Config) -> Issue:
     """Read and parse one issue file."""
     return parse_issue(path.read_text(encoding="utf-8"), config, path)

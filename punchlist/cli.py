@@ -17,7 +17,7 @@ from .config import (
 )
 from .errors import PunchError
 from .ids import new_id, resolve_id
-from .issue import FieldValue, Issue, load_issues, parse_issue, write_issue
+from .issue import FieldValue, Issue, load_issues, parse_issue, replace_field, write_issue
 
 # `list` filters on these scalar fields; each has a flag of the same name.
 FILTER_FIELDS: tuple[str, ...] = ("status", "type", "category", "priority", "parent")
@@ -141,6 +141,20 @@ def cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_close(args: argparse.Namespace) -> int:
+    """Set an issue's status to closed, changing only that line."""
+    config: Config = _load()
+    path: Path = config.issues_path / f"{resolve_id(config, args.id)}.md"
+    text: str = path.read_text(encoding="utf-8")
+    issue: Issue = parse_issue(text, config, path)
+    if issue.status == "closed":
+        print(f"{issue.id} already closed")
+        return 0
+    path.write_text(replace_field(text, config, path, "status", "closed"), encoding="utf-8")
+    print(f"closed {issue.id}")
+    return 0
+
+
 def _json_fields(issue: Issue, config: Config) -> dict[str, FieldValue]:
     """An issue's header fields in config order, for --json output."""
     return {name: issue.fields[name] for name in config.fields if name in issue.fields}
@@ -204,6 +218,10 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("id", help="an issue id, or any unique start of one")
     show.add_argument("--json", action="store_true", help="header fields plus body as JSON")
     show.set_defaults(func=cmd_show)
+
+    close = sub.add_parser("close", help="set an issue's status to closed")
+    close.add_argument("id", help="an issue id, or any unique start of one")
+    close.set_defaults(func=cmd_close)
 
     return parser
 

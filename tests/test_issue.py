@@ -8,7 +8,9 @@ import pytest
 
 from punchlist.config import Config
 from punchlist.errors import PunchError
-from punchlist.issue import Issue, format_issue, parse_issue, read_issue, write_issue
+from punchlist.issue import (
+    Issue, format_issue, parse_issue, read_issue, replace_field, write_issue,
+)
 
 SAMPLE = """\
 ---
@@ -120,6 +122,36 @@ def test_no_categories_configured_rejects_any(config: Config) -> None:
     bare = Config(**{**config.__dict__, "categories": ()})
     with pytest.raises(PunchError, match="none configured"):
         parse_issue(_header(*BASE, "category: tooling"), bare, PATH)
+
+
+def test_replace_field_changes_one_line(config: Config) -> None:
+    assert replace_field(SAMPLE, config, PATH, "status", "closed") == SAMPLE.replace(
+        "status: open", "status: closed"
+    )
+
+
+def test_replace_field_keeps_hand_edited_order(config: Config) -> None:
+    text = "---\ncreated: 2026-10-18\nstatus: open\nid: pl-aaaaa\ntitle: T\ntype: bug\n---\nbody\n"
+    assert replace_field(text, config, PATH, "status", "closed") == text.replace("open", "closed")
+
+
+def test_replace_field_ignores_body_lookalike(config: Config) -> None:
+    text = _header(*BASE) + "\nstatus: open in the body\n"
+    result = replace_field(text, config, PATH, "status", "closed")
+    assert result.endswith("\nstatus: open in the body\n")
+    assert "status: closed\n" in result
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    [
+        ("status", "done", "status 'done' is not one of"),
+        ("priority", "high", "no 'priority' field"),
+    ],
+)
+def test_replace_field_rejects(config: Config, name: str, value: str, message: str) -> None:
+    with pytest.raises(PunchError, match=message):
+        replace_field(_header(*BASE), config, PATH, name, value)
 
 
 def test_value_kept_verbatim(config: Config) -> None:

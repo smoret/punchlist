@@ -281,3 +281,44 @@ def test_show_rejects(sample: Config, capsys: pytest.CaptureFixture[str],
     (sample.issues_path / "pl-bad01.md").write_text("junk\n", encoding="utf-8")
     assert main(["show", *args]) == 1
     assert message in capsys.readouterr().err
+
+
+def test_close(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    path = sample.issues_path / "pl-high1.md"
+    before: str = path.read_text(encoding="utf-8")
+    assert main(["close", "high1"]) == 0
+    assert capsys.readouterr().out == "closed pl-high1\n"
+    assert path.read_text(encoding="utf-8") == before.replace("status: open", "status: closed")
+    assert "pl-high1" not in _list(capsys)
+
+
+def test_close_keeps_hand_edits(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    path = sample.issues_path / "pl-hand1.md"
+    text = "---\ntitle: Hand  made\nid: pl-hand1\nstatus: open\ntype: bug\ncreated: 2026-01-01\n---\nx\n"
+    path.write_text(text, encoding="utf-8")
+    assert main(["close", "hand1"]) == 0
+    capsys.readouterr()
+    assert path.read_text(encoding="utf-8") == text.replace("status: open", "status: closed")
+
+
+def test_close_already_closed(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    path = sample.issues_path / "pl-done1.md"
+    before: bytes = path.read_bytes()
+    assert main(["close", "done1"]) == 0
+    assert capsys.readouterr().out == "pl-done1 already closed\n"
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["zzz"], "no issue matches 'zzz'"),
+        (["bad01"], "pl-bad01.md:1: first line must be '---'"),
+    ],
+)
+def test_close_rejects(sample: Config, capsys: pytest.CaptureFixture[str],
+                       args: list[str], message: str) -> None:
+    (sample.issues_path / "pl-bad01.md").write_text("junk\n", encoding="utf-8")
+    assert main(["close", *args]) == 1
+    assert message in capsys.readouterr().err
+    assert (sample.issues_path / "pl-bad01.md").read_text(encoding="utf-8") == "junk\n"
