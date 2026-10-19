@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "punchlist"
+version = "0.0.1"
+description = "A file-based issue tracker: one markdown file per issue, in the project's own git repo"
+authors = [
+    { name = "Steven Moret", email = "smoret@gmail.com" },
+]
+license = "LicenseRef-Proprietary"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pylint",
+    "pyright",
+]
+
+[project.scripts]
+punch = "punchlist.cli:main"
+punchlist = "punchlist.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["punchlist*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pylint."messages control"]
+# Complexity metrics are refactor-time signals, not defects.
+disable = [
+    "too-many-arguments",
+    "too-many-branches",
+    "too-many-instance-attributes",
+    "too-many-locals",
+    "too-many-positional-arguments",
+    "too-many-return-statements",
+    "too-many-statements",
+    "too-few-public-methods",
+]

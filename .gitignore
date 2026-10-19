@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+
+# Scratch output
+temp/
+
+# Virtual environment
+.venv/
+
+# IDE / Tools
+.idea/
+.claude/*
+!.claude/skills/
