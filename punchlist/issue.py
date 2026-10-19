@@ -41,11 +41,16 @@ FieldValue = str | list[str]
 
 @dataclass
 class Issue:
-    """One issue: its header fields, in no particular order, and its body text."""
+    """One issue: its header fields, in no particular order, and its body text.
+
+    A parsed issue also knows its file and the line each field was on, so
+    later checks (`punch check`) can point at the right line.
+    """
 
     fields: dict[str, FieldValue]
     body: str = ""
     path: Path | None = field(default=None, compare=False)
+    lines: dict[str, int] = field(default_factory=dict[str, int], compare=False)
 
     def text(self, name: str) -> str | None:
         """A scalar field's value, or None if absent."""
@@ -94,12 +99,14 @@ def parse_issue(text: str, config: Config, path: Path) -> Issue:
         raise PunchError(f"header has no closing {DELIMITER!r}", path, 1) from None
 
     fields: dict[str, FieldValue] = {}
+    linenos: dict[str, int] = {}
     for index in range(1, close):
         lineno: int = index + 1
         name, value = _parse_line(lines[index], config, path, lineno)
         if name in fields:
             raise PunchError(f"duplicate field {name!r}", path, lineno)
         fields[name] = value
+        linenos[name] = lineno
 
     missing: list[str] = [f for f in REQUIRED_FIELDS if f not in fields]
     if missing:
@@ -108,7 +115,7 @@ def parse_issue(text: str, config: Config, path: Path) -> Issue:
     body: str = "\n".join(lines[close + 1:])
     if body.startswith("\n"):
         body = body[1:]
-    return Issue(fields, body, path)
+    return Issue(fields, body, path, linenos)
 
 
 def _parse_line(line: str, config: Config, path: Path, lineno: int) -> tuple[str, FieldValue]:
@@ -187,9 +194,20 @@ def replace_field(text: str, config: Config, path: Path, name: str, value: str) 
     raise PunchError(f"no {name!r} field to replace", path)
 
 
+def read_text(path: Path) -> str:
+    """An issue file's text. Invalid UTF-8 is a PunchError naming the line."""
+    data: bytes = path.read_bytes()
+    try:
+        text: str = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise PunchError("not valid UTF-8", path, data.count(b"\n", 0, exc.start) + 1) from None
+    # The same newline translation read_text() does in text mode.
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def read_issue(path: Path, config: Config) -> Issue:
     """Read and parse one issue file."""
-    return parse_issue(path.read_text(encoding="utf-8"), config, path)
+    return parse_issue(read_text(path), config, path)
 
 
 def load_issues(config: Config) -> list[Issue]:

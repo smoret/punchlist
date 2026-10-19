@@ -115,7 +115,7 @@ def test_fails_closed_with_line(config: Config, text: str, line: int, message: s
     with pytest.raises(PunchError, match=message) as info:
         parse_issue(text, config, PATH)
     assert info.value.line == line
-    assert str(info.value).startswith(f"{PATH}:{line}: ")
+    assert str(info.value).startswith(f"{PATH.as_posix()}:{line}: ")
 
 
 def test_no_categories_configured_rejects_any(config: Config) -> None:

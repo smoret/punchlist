@@ -12,12 +12,15 @@ import json
 import sys
 from pathlib import Path
 
+from .check import check_issues
 from .config import (
     CONFIG_NAME, PREFIX_RE, Config, default_config, find_root, load_config, parse_config,
 )
 from .errors import PunchError
 from .ids import new_id, resolve_id
-from .issue import FieldValue, Issue, load_issues, parse_issue, replace_field, write_issue
+from .issue import (
+    FieldValue, Issue, load_issues, parse_issue, read_text, replace_field, write_issue,
+)
 
 # `list` filters on these scalar fields; each has a flag of the same name.
 FILTER_FIELDS: tuple[str, ...] = ("status", "type", "category", "priority", "parent")
@@ -132,7 +135,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     """Print one issue's file, or with --json its fields plus `body`."""
     config: Config = _load()
     path: Path = config.issues_path / f"{resolve_id(config, args.id)}.md"
-    text: str = path.read_text(encoding="utf-8")
+    text: str = read_text(path)
     issue: Issue = parse_issue(text, config, path)
     if args.json:
         print(json.dumps({**_json_fields(issue, config), "body": issue.body}, ensure_ascii=False))
@@ -145,13 +148,25 @@ def cmd_close(args: argparse.Namespace) -> int:
     """Set an issue's status to closed, changing only that line."""
     config: Config = _load()
     path: Path = config.issues_path / f"{resolve_id(config, args.id)}.md"
-    text: str = path.read_text(encoding="utf-8")
+    text: str = read_text(path)
     issue: Issue = parse_issue(text, config, path)
     if issue.status == "closed":
         print(f"{issue.id} already closed")
         return 0
     path.write_text(replace_field(text, config, path, "status", "closed"), encoding="utf-8")
     print(f"closed {issue.id}")
+    return 0
+
+
+def cmd_check(_args: argparse.Namespace) -> int:
+    """Print every problem in every issue file, one per line; exit 1 if there are any."""
+    config: Config = _load()
+    count, problems = check_issues(config)
+    for problem in problems:
+        print(problem.describe(Path.cwd().resolve()))
+    if problems:
+        return 1
+    print(f"{count} issue{'' if count == 1 else 's'} ok")
     return 0
 
 
@@ -223,6 +238,9 @@ def build_parser() -> argparse.ArgumentParser:
     close.add_argument("id", help="an issue id, or any unique start of one")
     close.set_defaults(func=cmd_close)
 
+    check = sub.add_parser("check", help="validate every issue file; exit 1 on any problem")
+    check.set_defaults(func=cmd_check)
+
     return parser
 
 
@@ -241,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except PunchError as exc:
-        print(f"punch: error: {exc}", file=sys.stderr)
+        print(f"punch: error: {exc.describe(Path.cwd().resolve())}", file=sys.stderr)
         return 1
 
 

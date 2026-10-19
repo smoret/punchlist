@@ -75,7 +75,7 @@ Fields are written in config order, so diffs stay minimal and a file punchlist w
 - `<prefix>-<n chars>`. The prefix (lowercase letters and digits) and length (default 5) come from config.
 - Lowercase Crockford base32 (`0-9a-z` minus `i`, `l`, `o`, `u`), drawn with `secrets`.
 - `new` redraws if the file already exists, so a collision within one checkout is impossible. The remaining risk is two unmerged branches minting the same id: at 5 chars (about 33M ids) that's roughly 0.0006% for 20 concurrent creations, and it surfaces loudly as a git add/add conflict.
-- `check` validates that every header parses, each `id:` matches its filename, ids are unique, and every `parent` exists. Projects can run it as a test.
+- `check` validates that every header parses, each `id:` matches its filename (which makes ids unique), every `parent` exists, and no chain of parents loops. It reports every problem, one `path:line: message` per line, and exits 1 if there are any. Projects can run it as a test.
 
 ## Config (`punchlist.json`)
 

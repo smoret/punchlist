@@ -4,7 +4,6 @@ Planned work for punchlist, in order. **Delete an item when it lands.** This fil
 
 ## Milestone 1: usable
 
-- [ ] **`punch check`** -- every file parses, id matches filename, ids unique, enum values valid, `parent` points at an existing issue. Exit 1 on any problem.
 - [ ] **`punch import-md <file>`** -- the roadmap importer described in [docs/design.md](docs/design.md). `--dry-run` first; fails closed on unclassifiable lines. Verified against synthetic fixtures and then a dry run of a real roadmap.
 
 **Milestone check:** rehearse a real import: `punch init` a root under `temp/`, import a real roadmap into it with `--add-categories`, then `list`, `show`, `close`, and `check` behave.
