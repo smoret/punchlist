@@ -1,0 +1,37 @@
+{
+  "prefix": "pl",
+  "id_length": 5,
+  "fanout": 1,
+  "issues_dir": "issues",
+  "fields": [
+    "id",
+    "title",
+    "type",
+    "status",
+    "priority",
+    "category",
+    "parent",
+    "labels",
+    "created"
+  ],
+  "list_fields": [
+    "labels"
+  ],
+  "types": [
+    "epic",
+    "feature",
+    "task",
+    "bug",
+    "subtask"
+  ],
+  "statuses": [
+    "open",
+    "closed"
+  ],
+  "priorities": [
+    "high",
+    "medium",
+    "low"
+  ],
+  "categories": []
+}

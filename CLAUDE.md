@@ -9,7 +9,7 @@ punchlist is a file-based issue tracker: one markdown file per issue, in the pro
 | File | Purpose |
 |---|---|
 | [README.md](README.md) | Setup and usage |
-| [ROADMAP.md](ROADMAP.md) | Planned work, in order. Temporary: once punchlist can import it, it is imported into punchlist's own issues and deleted |
+| [issues/](issues/) | Planned work, tracked with punchlist itself -- see "Tracking work" below |
 | [docs/design.md](docs/design.md) | What was decided and why: storage layout, file format, ids, config, importer |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The module map: what each module owns and must not do. Read before adding a module or moving responsibility between them |
 
@@ -18,6 +18,15 @@ punchlist is a file-based issue tracker: one markdown file per issue, in the pro
 ### Keeping ARCHITECTURE.md honest
 
 It is a **map**, not an encyclopedia. A new module gets a paragraph (what it owns, what it must not do) and a place in the layer diagram; moving a responsibility updates both paragraphs in the same commit. If a section grows past a screen, it moves to `docs/<topic>.md` and leaves a pointer behind.
+
+## Tracking work
+
+This repo tracks its own work with `punch` (from `.venv`; config in `punchlist.json`, issues in `issues/`). Build the next item only when a real use asks for it.
+
+- Find work with `punch list`; read an issue with `punch show <id>`.
+- Close an issue with `punch close <id>` **in the same commit** as the work that finishes it -- that is the point of keeping issues in the repo.
+- New work found along the way becomes `punch new "Title" --type task --body "..."` rather than a TODO comment.
+- Edit an issue's body by hand with the editor; `punch check` validates it.
 
 ## Layout
 
@@ -54,6 +63,7 @@ python -m pytest tests/test_x.py     # while iterating
 python -m pytest tests/              # before committing
 python -m pylint punchlist
 python -m pyright punchlist
+punch check                          # the repo's own issues
 ```
 
 ## Working with collaborators

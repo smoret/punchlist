@@ -2,7 +2,7 @@
 
 A small, file-based issue tracker for projects worked on by one developer and a crew of agents. Each issue is a markdown file with a short header, stored in the project's own git repo, so closing an issue lands in the same commit as the work that closed it. The `punch` CLI creates, lists, filters, and checks them.
 
-Status: under construction. See [ROADMAP.md](ROADMAP.md).
+Status: early, and tracking its own work: planned work is in [issues/](issues/) (`punch list`).
 
 ## Setup
 
@@ -49,6 +49,6 @@ The header is `key: value` lines, values taken verbatim -- no quoting, no YAML. 
 | File | Purpose |
 |---|---|
 | [CLAUDE.md](CLAUDE.md) | Conventions for agents working in this repo |
-| [ROADMAP.md](ROADMAP.md) | Planned work |
+| [issues/](issues/) | Planned work, as punchlist issues |
 | [docs/design.md](docs/design.md) | What was decided and why |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The module map |
