@@ -171,6 +171,13 @@ def read_issue(path: Path, config: Config) -> Issue:
     return parse_issue(path.read_text(encoding="utf-8"), config, path)
 
 
+def load_issues(config: Config) -> list[Issue]:
+    """Every issue in the issues directory, in filename order. One bad file fails the lot."""
+    if not config.issues_path.is_dir():
+        return []
+    return [read_issue(path, config) for path in sorted(config.issues_path.glob("*.md"))]
+
+
 def write_issue(issue: Issue, config: Config, *, create: bool = False) -> Path:
     """Write an issue to `<issues_dir>/<id>.md`, in the platform's line endings.
 

@@ -18,7 +18,8 @@ pip install -e ".[dev]"
 punch init --prefix pl            # write punchlist.json in the current directory
 punch new "Title" --type task --category tooling   # prints the new id
 punch new "Title" --type bug --body-file -         # body from stdin
-punch list                        # open issues, one per line
+punch list                        # open issues: id status type priority category title
+punch list --all --label cli --json
 punch show pl-7k3qx
 punch close pl-7k3qx
 punch check                       # validate every issue file

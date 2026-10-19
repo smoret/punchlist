@@ -17,11 +17,23 @@ from .config import (
 )
 from .errors import PunchError
 from .ids import new_id
-from .issue import FieldValue, Issue, write_issue
+from .issue import FieldValue, Issue, load_issues, write_issue
+
+# `list` filters on these scalar fields; each has a flag of the same name.
+FILTER_FIELDS: tuple[str, ...] = ("status", "type", "category", "priority", "parent")
 
 
 def _load() -> Config:
     return load_config(find_root(Path.cwd()))
+
+
+def _load_all(config: Config) -> list[Issue]:
+    # load_issues stops at the first bad file; point at the command that reports them all.
+    try:
+        return load_issues(config)
+    except PunchError as exc:
+        raise PunchError(f"{exc.message} (run `punch check` to find corrupt files)",
+                         exc.path, exc.line) from exc
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -77,6 +89,53 @@ def cmd_new(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_list(args: argparse.Namespace) -> int:
+    """Print matching issues, one line each: id status type priority category title."""
+    config: Config = _load()
+    issues: list[Issue] = _load_all(config)
+    wanted: dict[str, str] = {}
+    for name in FILTER_FIELDS:
+        value: str | None = getattr(args, name)
+        if value is None:
+            continue
+        error: str | None = config.choice_error(name, value)
+        if error is not None:
+            raise PunchError(error)
+        wanted[name] = value
+    if "status" not in wanted and not args.all:
+        wanted["status"] = "open"
+    parent: str | None = wanted.get("parent")
+    if parent is not None and all(issue.id != parent for issue in issues):
+        raise PunchError(f"parent {parent!r} does not exist")
+    labels: list[str] = args.label or []
+    if labels and "labels" not in config.list_fields:
+        raise PunchError("labels is not a list field in the config")
+
+    matches: list[Issue] = [
+        issue for issue in issues
+        if all(issue.text(name) == value for name, value in wanted.items())
+        and all(label in issue.items("labels") for label in labels)
+    ]
+    rank: dict[str, int] = {p: i for i, p in enumerate(config.priorities)}
+    matches.sort(key=lambda issue: (
+        rank.get(issue.text("priority") or "", len(rank)), issue.text("created") or "", issue.id,
+    ))
+
+    if args.json:
+        rows: list[dict[str, FieldValue]] = [
+            {name: issue.fields[name] for name in config.fields if name in issue.fields}
+            for issue in matches
+        ]
+        print(json.dumps(rows, ensure_ascii=False))
+        return 0
+    for issue in matches:
+        columns: list[str] = [issue.id] + [
+            issue.text(name) or "-" for name in ("status", "type", "priority", "category")
+        ]
+        print(" ".join(columns), issue.title)
+    return 0
+
+
 def _read_body(args: argparse.Namespace) -> str:
     """The body from --body or --body-file (`-` for stdin), trimmed of blank edges."""
     text: str
@@ -116,6 +175,20 @@ def build_parser() -> argparse.ArgumentParser:
     body.add_argument("--body", help="body text")
     body.add_argument("--body-file", help="read the body from a file, or `-` for stdin")
     new.set_defaults(func=cmd_new)
+
+    lst = sub.add_parser(
+        "list", help="list open issues: id status type priority category title"
+    )
+    statuses = lst.add_mutually_exclusive_group()
+    statuses.add_argument("--status", help="only this status (default: open)")
+    statuses.add_argument("--all", action="store_true", help="every status")
+    lst.add_argument("--type")
+    lst.add_argument("--category")
+    lst.add_argument("--priority")
+    lst.add_argument("--parent", help="only children of this issue id")
+    lst.add_argument("--label", action="append", help="repeatable; issues must have every label")
+    lst.add_argument("--json", action="store_true", help="a JSON array of header fields")
+    lst.set_defaults(func=cmd_list)
 
     return parser
 

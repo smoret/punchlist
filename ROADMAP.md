@@ -4,7 +4,6 @@ Planned work for punchlist, in order. **Delete an item when it lands.** This fil
 
 ## Milestone 1: usable
 
-- [ ] **`punch list`** -- open issues by default, one terse line each; filters `--status`, `--type`, `--category`, `--priority`, `--parent`, `--label`; `--json`.
 - [ ] **`punch show <id>`** -- prints the issue. Accepts a unique id prefix, like git.
 - [ ] **`punch close <id>`** -- sets `status: closed`.
 - [ ] **`punch check`** -- every file parses, id matches filename, ids unique, enum values valid, `parent` points at an existing issue. Exit 1 on any problem.

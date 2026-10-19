@@ -10,7 +10,7 @@ import pytest
 
 from punchlist.cli import main
 from punchlist.config import CONFIG_NAME, Config, load_config
-from punchlist.issue import read_issue
+from punchlist.issue import FieldValue, Issue, read_issue, write_issue
 
 
 def test_init_writes_loadable_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -133,3 +133,103 @@ def test_new_outside_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     monkeypatch.chdir(tmp_path)
     assert main(["new", "T", "--type", "bug"]) == 1
     assert "run `punch init`" in capsys.readouterr().err
+
+
+def _make(config: Config, issue_id: str, title: str, **fields: FieldValue) -> None:
+    """Write an issue with a fixed id; type task, status open, created 2026-01-01 unless given."""
+    base: dict[str, FieldValue] = {
+        "id": issue_id, "title": title, "type": "task", "status": "open", "created": "2026-01-01",
+    }
+    write_issue(Issue({**base, **fields}), config)
+
+
+@pytest.fixture
+def sample(in_root: Path, config: Config) -> Config:
+    """Five issues covering every filter."""
+    _make(config, "pl-epic1", "The epic", type="epic", priority="medium", category="tooling")
+    _make(config, "pl-low01", "Low child", priority="low", parent="pl-epic1", labels=["a", "b"])
+    _make(config, "pl-high1", "High one — dash", priority="high", category="docs", labels=["a"])
+    _make(config, "pl-none1", "No priority", type="bug", created="2025-12-31")
+    _make(config, "pl-done1", "Closed one", status="closed", priority="high")
+    return config
+
+
+def _list(capsys: pytest.CaptureFixture[str], *args: str) -> list[str]:
+    """Run `punch list`, assert it succeeded, and return the ids printed."""
+    assert main(["list", *args]) == 0
+    return [line.split(" ", 1)[0] for line in capsys.readouterr().out.splitlines()]
+
+
+def test_list_line_format(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["list", "--priority", "high"]) == 0
+    assert capsys.readouterr().out == "pl-high1 open task high docs High one — dash\n"
+    assert main(["list", "--type", "bug"]) == 0
+    assert capsys.readouterr().out == "pl-none1 open bug - - No priority\n"
+
+
+def test_list_open_sorted_by_priority(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    # Priority in config order, missing priority last.
+    assert _list(capsys) == ["pl-high1", "pl-epic1", "pl-low01", "pl-none1"]
+
+
+def test_list_sorts_by_created_within_priority(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    _make(sample, "pl-none0", "Newer, no priority", created="2026-02-01")
+    assert _list(capsys, "--priority", "high", "--all")[0] == "pl-done1"
+    assert _list(capsys)[-2:] == ["pl-none1", "pl-none0"]
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["--status", "closed"], ["pl-done1"]),
+        (["--all"], ["pl-done1", "pl-high1", "pl-epic1", "pl-low01", "pl-none1"]),
+        (["--type", "epic"], ["pl-epic1"]),
+        (["--category", "docs"], ["pl-high1"]),
+        (["--parent", "pl-epic1"], ["pl-low01"]),
+        (["--label", "a"], ["pl-high1", "pl-low01"]),
+        (["--label", "a", "--label", "b"], ["pl-low01"]),
+        (["--priority", "high", "--all"], ["pl-done1", "pl-high1"]),
+        (["--category", "tooling", "--type", "bug"], []),
+    ],
+)
+def test_list_filters(sample: Config, capsys: pytest.CaptureFixture[str],
+                      args: list[str], expected: list[str]) -> None:
+    assert _list(capsys, *args) == expected
+
+
+def test_list_json(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["list", "--label", "b", "--json"]) == 0
+    out: str = capsys.readouterr().out
+    assert out == (
+        '[{"id": "pl-low01", "title": "Low child", "type": "task", "status": "open", '
+        '"priority": "low", "parent": "pl-epic1", "labels": ["a", "b"], "created": "2026-01-01"}]\n'
+    )
+
+
+def test_list_empty(in_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert _list(capsys) == []
+    assert main(["list", "--json"]) == 0
+    assert capsys.readouterr().out == "[]\n"
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--status", "done"], "status 'done' is not one of"),
+        (["--type", "tsak"], "type 'tsak'"),
+        (["--category", "web"], "category 'web'"),
+        (["--parent", "pl-zzzzz"], "parent 'pl-zzzzz' does not exist"),
+    ],
+)
+def test_list_rejects(sample: Config, capsys: pytest.CaptureFixture[str],
+                      args: list[str], message: str) -> None:
+    assert main(["list", *args]) == 1
+    assert message in capsys.readouterr().err
+
+
+def test_list_fails_closed_on_bad_file(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    (sample.issues_path / "pl-bad01.md").write_text("---\nid: pl-bad01\n", encoding="utf-8")
+    assert main(["list"]) == 1
+    err: str = capsys.readouterr().err
+    assert "pl-bad01.md:1: header has no closing" in err
+    assert err.rstrip().endswith("(run `punch check` to find corrupt files)")
