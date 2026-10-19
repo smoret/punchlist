@@ -4,7 +4,6 @@ Planned work for punchlist, in order. **Delete an item when it lands.** This fil
 
 ## Milestone 1: usable
 
-- [ ] **`punch new`** -- id generation (prefix, Crockford base32, length from config, redraw on existing file); title as an argument, other fields as flags, body from `--body`, `--body-file`, or stdin. Prints the new id.
 - [ ] **`punch list`** -- open issues by default, one terse line each; filters `--status`, `--type`, `--category`, `--priority`, `--parent`, `--label`; `--json`.
 - [ ] **`punch show <id>`** -- prints the issue. Accepts a unique id prefix, like git.
 - [ ] **`punch close <id>`** -- sets `status: closed`.

@@ -126,10 +126,9 @@ def _parse_line(line: str, config: Config, path: Path, lineno: int) -> tuple[str
             raise PunchError(f"empty item in list field {name!r}", path, lineno)
         return name, items
 
-    allowed: tuple[str, ...] | None = config.allowed(name)
-    if allowed is not None and value not in allowed:
-        choices: str = ", ".join(allowed) if allowed else "none configured"
-        raise PunchError(f"{name} {value!r} is not one of: {choices}", path, lineno)
+    error: str | None = config.choice_error(name, value)
+    if error is not None:
+        raise PunchError(error, path, lineno)
     if name == "created":
         _check_date(value, path, lineno)
     return name, value
@@ -172,16 +171,21 @@ def read_issue(path: Path, config: Config) -> Issue:
     return parse_issue(path.read_text(encoding="utf-8"), config, path)
 
 
-def write_issue(issue: Issue, config: Config) -> Path:
+def write_issue(issue: Issue, config: Config, *, create: bool = False) -> Path:
     """Write an issue to `<issues_dir>/<id>.md`, in the platform's line endings.
 
     The text is parsed back before writing, so this never writes a file that
-    `punch check` would reject.
+    `punch check` would reject. With `create`, an existing file is an error
+    rather than overwritten.
     """
     path: Path = config.issues_path / f"{issue.id}.md"
     text: str = format_issue(issue, config)
     parse_issue(text, config, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    try:
+        with path.open("x" if create else "w", encoding="utf-8") as file:
+            file.write(text)
+    except FileExistsError:
+        raise PunchError("already exists", path) from None
     issue.path = path
     return path

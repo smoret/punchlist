@@ -58,6 +58,14 @@ class Config:
         key: str | None = ENUM_FIELDS.get(field)
         return None if key is None else getattr(self, key)
 
+    def choice_error(self, field: str, value: str) -> str | None:
+        """Why `value` isn't allowed for `field`, or None if it is (or `field` is free text)."""
+        allowed: tuple[str, ...] | None = self.allowed(field)
+        if allowed is None or value in allowed:
+            return None
+        choices: str = ", ".join(allowed) if allowed else "none configured"
+        return f"{field} {value!r} is not one of: {choices}"
+
 
 def default_config(prefix: str) -> dict[str, Any]:
     """The punchlist.json that `punch init` writes."""
