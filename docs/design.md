@@ -106,16 +106,25 @@ Everything enumerable is config, so new categories, types, or priorities need no
 
 Epics and subtasks are expressed with `parent: <id>`. `subtask` exists as a type, but nothing requires a subtask to have a parent or forbids a task from having one -- the link carries the structure.
 
-## Importing a markdown roadmap (planned)
+## Importing a markdown roadmap
 
 `punch import-md <file>` converts an existing checklist-style `ROADMAP.md` into issues, writing into whichever root it discovers like every other command. It recognizes these shapes:
 
-- `# Title` and the intro paragraph under it: not issues; skipped.
+- `# Title` on the first line and the prose under it: the file's intro; skipped.
 - `## Section` becomes the `category` (slugified); `### Subsection` becomes a label.
-- `- [ ] **Title** -- body`: a task. The bold text is the title; the text after ` -- ` is the body.
-- `- [ ] Plain text ...` with no bold: the title is the text before the first ` -- `, or the first sentence; the full text is the body.
-- `- **Title** -- body` with nested children and no checkbox: an `epic`. Its children get `parent:` set to its id. Nesting goes up to three levels.
-- Plain bullets with no checkbox or bold title inside a group ("Out of scope: ...") are notes, appended to the nearest parent's body.
-- Relative links in bodies are rewritten from the source file's directory to the issues directory (`docs/x.md` -> `../docs/x.md`). Absolute URLs and `#anchor`-only links are left alone.
+- `- [ ] ...`: a `task`, whether or not it has children.
+- `- ...` with nested bullets and no checkbox: an `epic`.
+- `- ...` with no checkbox and no children ("Out of scope: ...", "**Waits for its runner**: ..."): a note, folded into its parent's body as a bullet.
+- An indented paragraph or table after a blank line belongs to the item it is indented under, as in markdown: two spaces past a bullet's column. It is added to that item's body.
+- Nested bullets get `parent:` set to the nearest enclosing task or epic, at any depth.
 
-It fails closed: a line it can't classify is listed with its line number, and nothing is written until every line is accounted for or an explicit flag says to skip them. `--dry-run` prints counts by category and type plus any unclassified lines. Categories the import needs but the config lacks are listed; a real run refuses unless `--add-categories` writes them into `punchlist.json`.
+Titles and bodies:
+
+- The title is the first `**bold**` span, minus a trailing `.` or `:`. Text after the bold (`(ref 7.16)`, `, each ...`) stays in the body.
+- A plain item's title is the text before the first ` -- `, `: `, `; `, or sentence end. Over 100 characters, it is cut at a word boundary with `...`.
+- The body is the item's full text verbatim, bold title included, then its continuations and notes in document order. Nothing in the item is lost; the title is repeated once.
+- Relative links are rewritten from the source file's directory to the issues directory (`docs/x.md` -> `../docs/x.md`). Absolute URLs, root-relative paths, and `#anchor`-only links are left alone.
+
+It fails closed. Prose outside any item (a section's intro paragraphs, say), a checkbox other than `[ ]`, a note with no parent, a bold title with no closing `**`, an unexpected heading, and tab indentation are each reported with their lines, and a real run writes nothing while any remain. Prose under a `##` has no home in an issue tracker, so it is refused rather than dropped: move it (to `docs/`, say) or pass `--skip-unclassified`.
+
+`--dry-run` prints counts by type and category, the unclassified lines, and the categories the config lacks, and exits 1 if a real run would refuse. A real run refuses missing categories unless `--add-categories` appends them to `punchlist.json`. It validates every issue before writing any. Running it twice imports everything twice.

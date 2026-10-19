@@ -12,7 +12,7 @@ python -m venv .venv
 pip install -e ".[dev]"
 ```
 
-## Usage (planned)
+## Usage
 
 ```bash
 punch init --prefix pl            # write punchlist.json in the current directory
@@ -24,6 +24,8 @@ punch show pl-7k3qx                # or any unique start: pl-7k, 7k3
 punch show 7k3 --json             # header fields plus body
 punch close pl-7k3qx
 punch check                       # validate every issue file
+punch import-md ROADMAP.md --dry-run   # what a markdown checklist would become
+punch import-md ROADMAP.md --add-categories
 ```
 
 ## Issue format
@@ -49,3 +51,4 @@ The header is `key: value` lines, values taken verbatim -- no quoting, no YAML. 
 | [CLAUDE.md](CLAUDE.md) | Conventions for agents working in this repo |
 | [ROADMAP.md](ROADMAP.md) | Planned work |
 | [docs/design.md](docs/design.md) | What was decided and why |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | The module map |

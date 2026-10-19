@@ -11,13 +11,13 @@ punchlist is a file-based issue tracker: one markdown file per issue, in the pro
 | [README.md](README.md) | Setup and usage |
 | [ROADMAP.md](ROADMAP.md) | Planned work, in order. Temporary: once punchlist can import it, it is imported into punchlist's own issues and deleted |
 | [docs/design.md](docs/design.md) | What was decided and why: storage layout, file format, ids, config, importer |
-| ARCHITECTURE.md | *Not written yet* -- see below |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | The module map: what each module owns and must not do. Read before adding a module or moving responsibility between them |
 
 **Keep this map current.** Adding a doc means adding a row here and in README.
 
-### When to write ARCHITECTURE.md
+### Keeping ARCHITECTURE.md honest
 
-Write it once there is a second module worth explaining -- likely when the importer or a web UI lands beside the core. Until then the module docstrings are the architecture. It is a **map**, not an encyclopedia: the design principles (fail closed, stdlib only, files are the database, agents are the primary user), then one short paragraph per module saying what it owns and what it must not do, then pointers into `docs/` for anything longer. If a section grows past a screen, it moves to `docs/<topic>.md` and leaves a pointer behind.
+It is a **map**, not an encyclopedia. A new module gets a paragraph (what it owns, what it must not do) and a place in the layer diagram; moving a responsibility updates both paragraphs in the same commit. If a section grows past a screen, it moves to `docs/<topic>.md` and leaves a pointer behind.
 
 ## Layout
 

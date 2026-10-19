@@ -13,17 +13,22 @@ import sys
 from pathlib import Path
 
 from .check import check_issues
-from .config import (
-    CONFIG_NAME, PREFIX_RE, Config, default_config, find_root, load_config, parse_config,
-)
+from .config import CONFIG_NAME, Config, add_categories, find_root, init_config, load_config
 from .errors import PunchError
 from .ids import new_id, resolve_id
+from .importer import ImportPlan, plan_import
 from .issue import (
-    FieldValue, Issue, load_issues, parse_issue, read_text, replace_field, write_issue,
+    FieldValue, Issue, format_issue, load_issues, parse_issue, read_issue, read_text,
+    update_field, write_issue,
 )
 
 # `list` filters on these scalar fields; each has a flag of the same name.
 FILTER_FIELDS: tuple[str, ...] = ("status", "type", "category", "priority", "parent")
+
+
+def _count(n: int, noun: str) -> str:
+    """`1 issue`, `2 issues`."""
+    return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
 def _load() -> Config:
@@ -41,16 +46,7 @@ def _load_all(config: Config) -> list[Issue]:
 
 def cmd_init(args: argparse.Namespace) -> int:
     """Write a default punchlist.json in the current directory."""
-    root: Path = Path.cwd()
-    path: Path = root / CONFIG_NAME
-    if path.exists():
-        raise PunchError("already exists", path)
-    prefix: str = args.prefix
-    if not PREFIX_RE.fullmatch(prefix):
-        raise PunchError(f"prefix {prefix!r} must be lowercase letters and digits")
-    data: dict[str, object] = default_config(prefix)
-    parse_config(data, root, path)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    path: Path = init_config(Path.cwd(), args.prefix)
     print(f"wrote {path}")
     return 0
 
@@ -148,12 +144,11 @@ def cmd_close(args: argparse.Namespace) -> int:
     """Set an issue's status to closed, changing only that line."""
     config: Config = _load()
     path: Path = config.issues_path / f"{resolve_id(config, args.id)}.md"
-    text: str = read_text(path)
-    issue: Issue = parse_issue(text, config, path)
+    issue: Issue = read_issue(path, config)
     if issue.status == "closed":
         print(f"{issue.id} already closed")
         return 0
-    path.write_text(replace_field(text, config, path, "status", "closed"), encoding="utf-8")
+    update_field(path, config, "status", "closed")
     print(f"closed {issue.id}")
     return 0
 
@@ -166,7 +161,50 @@ def cmd_check(_args: argparse.Namespace) -> int:
         print(problem.describe(Path.cwd().resolve()))
     if problems:
         return 1
-    print(f"{count} issue{'' if count == 1 else 's'} ok")
+    print(f"{_count(count, 'issue')} ok")
+    return 0
+
+
+def cmd_import_md(args: argparse.Namespace) -> int:
+    """Import a markdown roadmap as issues; --dry-run reports what it would create."""
+    config: Config = _load()
+    source = Path(args.file)
+    try:
+        text: str = read_text(source)
+    except OSError as exc:
+        raise PunchError(f"cannot read: {exc.strerror}", source) from None
+    plan: ImportPlan = plan_import(text, source, config, datetime.date.today().isoformat())
+
+    verb: str = "would create" if args.dry_run else "creating"
+    types: str = ", ".join(f"{n} {t}" for t, n in sorted(plan.counts("type").items()))
+    print(f"{verb} {_count(len(plan.issues), 'issue')} ({types}); "
+          f"{_count(plan.notes, 'note')} folded into parents")
+    for category, count in sorted(plan.counts("category").items()):
+        print(f"  {category}: {count}")
+    shown: str = source.as_posix()
+    if plan.unclassified:
+        print("unclassified lines (move them, or pass --skip-unclassified):")
+        for item in plan.unclassified:
+            span: str = str(item.start) if item.start == item.end else f"{item.start}-{item.end}"
+            print(f"  {shown}:{span}: {item.reason}")
+    if plan.missing_categories:
+        print(f"categories missing from {CONFIG_NAME} (add them with --add-categories): "
+              + ", ".join(plan.missing_categories))
+
+    blocked: bool = (bool(plan.unclassified) and not args.skip_unclassified) or (
+        bool(plan.missing_categories) and not args.add_categories)
+    if args.dry_run:
+        return 1 if blocked else 0
+    if blocked:
+        raise PunchError("nothing imported")
+
+    if plan.missing_categories:
+        config = add_categories(config.root, plan.missing_categories)
+    for issue in plan.issues:  # validate every issue before writing any
+        parse_issue(format_issue(issue, config), config, config.issues_path / f"{issue.id}.md")
+    for issue in plan.issues:
+        write_issue(issue, config, create=True)
+    print(f"created {_count(len(plan.issues), 'issue')}")
     return 0
 
 
@@ -240,6 +278,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     check = sub.add_parser("check", help="validate every issue file; exit 1 on any problem")
     check.set_defaults(func=cmd_check)
+
+    imp = sub.add_parser("import-md", help="import a markdown roadmap's checklist as issues")
+    imp.add_argument("file")
+    imp.add_argument("--dry-run", action="store_true",
+                     help="report what would be created; exit 1 if a real run would refuse")
+    imp.add_argument("--add-categories", action="store_true",
+                     help=f"add categories the import needs to {CONFIG_NAME}")
+    imp.add_argument("--skip-unclassified", action="store_true",
+                     help="import anyway, leaving out lines that fit no shape")
+    imp.set_defaults(func=cmd_import_md)
 
     return parser
 

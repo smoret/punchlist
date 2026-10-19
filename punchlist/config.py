@@ -105,6 +105,30 @@ def load_config(root: Path) -> Config:
     return parse_config(data, root, path)
 
 
+def init_config(root: Path, prefix: str) -> Path:
+    """Write a default punchlist.json in `root`; refuse if one exists."""
+    path: Path = root / CONFIG_NAME
+    if path.exists():
+        raise PunchError("already exists", path)
+    if not PREFIX_RE.fullmatch(prefix):
+        raise PunchError(f"prefix {prefix!r} must be lowercase letters and digits")
+    data: dict[str, Any] = default_config(prefix)
+    parse_config(data, root, path)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def add_categories(root: Path, names: list[str]) -> Config:
+    """Append `names` to punchlist.json's categories, rewrite it, and return the new config."""
+    path: Path = root / CONFIG_NAME
+    load_config(root)  # validate before touching it
+    data: Any = json.loads(path.read_text(encoding="utf-8"))
+    data["categories"] = [*data["categories"], *names]
+    config: Config = parse_config(data, root, path)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return config
+
+
 def parse_config(data: Any, root: Path, path: Path) -> Config:
     """Validate decoded punchlist.json contents. `path` is only for error messages."""
     if not isinstance(data, dict):

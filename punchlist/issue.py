@@ -194,6 +194,11 @@ def replace_field(text: str, config: Config, path: Path, name: str, value: str) 
     raise PunchError(f"no {name!r} field to replace", path)
 
 
+def update_field(path: Path, config: Config, name: str, value: str) -> None:
+    """Rewrite one existing header field of an issue file in place (see replace_field)."""
+    path.write_text(replace_field(read_text(path), config, path, name, value), encoding="utf-8")
+
+
 def read_text(path: Path) -> str:
     """An issue file's text. Invalid UTF-8 is a PunchError naming the line."""
     data: bytes = path.read_bytes()
