@@ -40,6 +40,7 @@ class Config:
     root: Path
     prefix: str
     id_length: int
+    fanout: int
     issues_dir: str
     fields: tuple[str, ...]
     list_fields: tuple[str, ...]
@@ -50,8 +51,23 @@ class Config:
 
     @property
     def issues_path(self) -> Path:
-        """The directory holding the issue files."""
+        """The directory holding the bucket directories."""
         return self.root / self.issues_dir
+
+    def issue_path(self, issue_id: str) -> Path:
+        """Where an issue lives: `<issues_dir>/<bucket>/<id>.md`. The only id-to-path mapping.
+
+        The bucket is the first `fanout` characters of the id's random part (the
+        prefix is constant, so it can't spread files). Buckets keep each folder
+        under the 1,000 entries GitHub's web UI lists. An issue's comments go
+        beside its file: `issue_path(id).with_suffix("") / "comments"`.
+        """
+        _prefix, sep, random = issue_id.partition("-")
+        if not sep or len(random) < self.fanout:
+            raise PunchError(
+                f"id {issue_id!r} needs a '-' and at least {self.fanout} characters after it"
+            )
+        return self.issues_path / random[:self.fanout] / f"{issue_id}.md"
 
     def allowed(self, field: str) -> tuple[str, ...] | None:
         """The allowed values of an enumerated field, or None if `field` is free text."""
@@ -72,6 +88,7 @@ def default_config(prefix: str) -> dict[str, Any]:
     return {
         "prefix": prefix,
         "id_length": 5,
+        "fanout": 1,
         "issues_dir": "issues",
         "fields": [
             "id", "title", "type", "status", "priority", "category", "parent", "labels", "created",
@@ -147,6 +164,9 @@ def parse_config(data: Any, root: Path, path: Path) -> Config:
     id_length: Any = data["id_length"]
     if not isinstance(id_length, int) or isinstance(id_length, bool) or id_length < 1:
         raise PunchError("id_length must be a positive integer", path)
+    fanout: Any = data["fanout"]
+    if not isinstance(fanout, int) or isinstance(fanout, bool) or not 1 <= fanout <= id_length:
+        raise PunchError(f"fanout must be an integer from 1 to id_length ({id_length})", path)
     issues_dir: str = _string(data, "issues_dir", path)
 
     fields: tuple[str, ...] = _string_list(data, "fields", path)
@@ -175,6 +195,7 @@ def parse_config(data: Any, root: Path, path: Path) -> Config:
         root=root,
         prefix=prefix,
         id_length=id_length,
+        fanout=fanout,
         issues_dir=issues_dir,
         fields=fields,
         list_fields=list_fields,

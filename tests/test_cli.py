@@ -7,6 +7,7 @@ import io
 from pathlib import Path
 
 import pytest
+from helpers import write_raw
 
 from punchlist.cli import main
 from punchlist.config import CONFIG_NAME, Config, load_config
@@ -18,6 +19,7 @@ def test_init_writes_loadable_config(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.chdir(tmp_path)
     assert main(["init", "--prefix", "pl"]) == 0
     assert load_config(tmp_path).prefix == "pl"
+    assert '\n  "fanout": 1,\n' in (tmp_path / CONFIG_NAME).read_text(encoding="utf-8")
     assert capsys.readouterr().out.startswith("wrote ")
 
 
@@ -55,7 +57,8 @@ def _new(capsys: pytest.CaptureFixture[str], *args: str) -> str:
 
 def test_new_minimal(in_root: Path, config: Config, capsys: pytest.CaptureFixture[str]) -> None:
     issue_id = _new(capsys, "Fix the thing", "--type", "bug")
-    path = config.issues_path / f"{issue_id}.md"
+    path = config.issue_path(issue_id)
+    assert path.parent == config.issues_path / issue_id[3]
     assert path.read_text(encoding="utf-8") == (
         f"---\nid: {issue_id}\ntitle: Fix the thing\ntype: bug\nstatus: open\n"
         f"created: {datetime.date.today().isoformat()}\n---\n"
@@ -67,7 +70,7 @@ def test_new_all_fields(in_root: Path, config: Config, capsys: pytest.CaptureFix
     child = _new(capsys, "  Child  ", "--type", "task", "--priority", "high",
                  "--category", "docs", "--parent", parent,
                  "--label", "a, b", "--label", "c", "--body", "\n\nLine one.\n\n")
-    issue = read_issue(config.issues_path / f"{child}.md", config)
+    issue = read_issue(config.issue_path(child), config)
     assert issue.title == "Child"
     assert issue.text("priority") == "high"
     assert issue.text("category") == "docs"
@@ -81,25 +84,25 @@ def test_new_found_from_subdirectory(in_root: Path, config: Config, monkeypatch:
     (in_root / "sub").mkdir()
     monkeypatch.chdir(in_root / "sub")
     issue_id = _new(capsys, "T", "--type", "bug")
-    assert (config.issues_path / f"{issue_id}.md").is_file()
+    assert config.issue_path(issue_id).is_file()
 
 
 def test_new_body_file(in_root: Path, config: Config, capsys: pytest.CaptureFixture[str]) -> None:
     (in_root / "body.md").write_text("From a file — UTF-8.\n", encoding="utf-8")
     issue_id = _new(capsys, "T", "--type", "bug", "--body-file", "body.md")
-    assert read_issue(config.issues_path / f"{issue_id}.md", config).body == "From a file — UTF-8.\n"
+    assert read_issue(config.issue_path(issue_id), config).body == "From a file — UTF-8.\n"
 
 
 def test_new_body_stdin(in_root: Path, config: Config, monkeypatch: pytest.MonkeyPatch,
                         capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr("sys.stdin", io.StringIO("From stdin.\n"))
     issue_id = _new(capsys, "T", "--type", "bug", "--body-file", "-")
-    assert read_issue(config.issues_path / f"{issue_id}.md", config).body == "From stdin.\n"
+    assert read_issue(config.issue_path(issue_id), config).body == "From stdin.\n"
 
 
 def test_new_blank_body_is_empty(in_root: Path, config: Config, capsys: pytest.CaptureFixture[str]) -> None:
     issue_id = _new(capsys, "T", "--type", "bug", "--body", "\n  \n")
-    assert read_issue(config.issues_path / f"{issue_id}.md", config).body == ""
+    assert read_issue(config.issue_path(issue_id), config).body == ""
 
 
 @pytest.mark.parametrize(
@@ -229,17 +232,25 @@ def test_list_rejects(sample: Config, capsys: pytest.CaptureFixture[str],
 
 
 def test_list_fails_closed_on_bad_file(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
-    (sample.issues_path / "pl-bad01.md").write_text("---\nid: pl-bad01\n", encoding="utf-8")
+    write_raw(sample, "pl-bad01", "---\nid: pl-bad01\n")
     assert main(["list"]) == 1
     err: str = capsys.readouterr().err
-    assert "pl-bad01.md:1: header has no closing" in err
+    assert "issues/b/pl-bad01.md:1: header has no closing" in err
+    assert err.rstrip().endswith("(run `punch check` to find corrupt files)")
+
+
+def test_list_fails_closed_on_misplaced_file(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    sample.issue_path("pl-high1").rename(sample.issues_path / "pl-high1.md")
+    assert main(["list"]) == 1
+    err: str = capsys.readouterr().err
+    assert "issues/pl-high1.md: in the wrong bucket; it belongs at issues/h/pl-high1.md" in err
     assert err.rstrip().endswith("(run `punch check` to find corrupt files)")
 
 
 def test_parent_accepts_short_id(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
     assert _list(capsys, "--parent", "epic") == ["pl-low01"]
     child = _new(capsys, "Another child", "--type", "task", "--parent", "epic")
-    issue = read_issue(sample.issues_path / f"{child}.md", sample)
+    issue = read_issue(sample.issue_path(child), sample)
     assert issue.text("parent") == "pl-epic1"
 
 
@@ -263,7 +274,7 @@ def test_show_json(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_show_ignores_unrelated_corrupt_file(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
-    (sample.issues_path / "pl-bad01.md").write_text("junk\n", encoding="utf-8")
+    write_raw(sample, "pl-bad01", "junk\n")
     assert main(["show", "high1"]) == 0
     assert "High one" in capsys.readouterr().out
 
@@ -273,18 +284,20 @@ def test_show_ignores_unrelated_corrupt_file(sample: Config, capsys: pytest.Capt
     [
         (["zzz"], "no issue matches 'zzz'"),
         (["pl-"], "'pl-' is ambiguous"),
-        (["bad01"], "pl-bad01.md:1: first line must be '---'"),
+        (["bad01"], "issues/b/pl-bad01.md:1: first line must be '---'"),
+        (["stray"], "issues/pl-stray.md: in the wrong bucket; it belongs at issues/s/pl-stray.md"),
     ],
 )
 def test_show_rejects(sample: Config, capsys: pytest.CaptureFixture[str],
                       args: list[str], message: str) -> None:
-    (sample.issues_path / "pl-bad01.md").write_text("junk\n", encoding="utf-8")
+    write_raw(sample, "pl-bad01", "junk\n")
+    (sample.issues_path / "pl-stray.md").write_text("junk\n", encoding="utf-8")
     assert main(["show", *args]) == 1
     assert message in capsys.readouterr().err
 
 
 def test_close(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
-    path = sample.issues_path / "pl-high1.md"
+    path = sample.issue_path("pl-high1")
     before: str = path.read_text(encoding="utf-8")
     assert main(["close", "high1"]) == 0
     assert capsys.readouterr().out == "closed pl-high1\n"
@@ -293,16 +306,15 @@ def test_close(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_close_keeps_hand_edits(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
-    path = sample.issues_path / "pl-hand1.md"
     text = "---\ntitle: Hand  made\nid: pl-hand1\nstatus: open\ntype: bug\ncreated: 2026-01-01\n---\nx\n"
-    path.write_text(text, encoding="utf-8")
+    path = write_raw(sample, "pl-hand1", text)
     assert main(["close", "hand1"]) == 0
     capsys.readouterr()
     assert path.read_text(encoding="utf-8") == text.replace("status: open", "status: closed")
 
 
 def test_close_already_closed(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
-    path = sample.issues_path / "pl-done1.md"
+    path = sample.issue_path("pl-done1")
     before: bytes = path.read_bytes()
     assert main(["close", "done1"]) == 0
     assert capsys.readouterr().out == "pl-done1 already closed\n"
@@ -313,12 +325,12 @@ def test_close_already_closed(sample: Config, capsys: pytest.CaptureFixture[str]
     ("args", "message"),
     [
         (["zzz"], "no issue matches 'zzz'"),
-        (["bad01"], "pl-bad01.md:1: first line must be '---'"),
+        (["bad01"], "issues/b/pl-bad01.md:1: first line must be '---'"),
     ],
 )
 def test_close_rejects(sample: Config, capsys: pytest.CaptureFixture[str],
                        args: list[str], message: str) -> None:
-    (sample.issues_path / "pl-bad01.md").write_text("junk\n", encoding="utf-8")
+    path = write_raw(sample, "pl-bad01", "junk\n")
     assert main(["close", *args]) == 1
     assert message in capsys.readouterr().err
-    assert (sample.issues_path / "pl-bad01.md").read_text(encoding="utf-8") == "junk\n"
+    assert path.read_text(encoding="utf-8") == "junk\n"

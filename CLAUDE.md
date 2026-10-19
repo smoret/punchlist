@@ -24,7 +24,7 @@ It is a **map**, not an encyclopedia. A new module gets a paragraph (what it own
 | Folder | Holds |
 |---|---|
 | `punchlist/` | The package. CLI entry point is `punchlist/cli.py`, exposed as `punch` (and `punchlist`) |
-| `tests/` | pytest; fixtures build issue roots in `tmp_path`, never in the repo |
+| `tests/` | pytest; fixtures build issue roots in `tmp_path`, never in the repo. Shared non-fixture helpers are in `tests/helpers.py` |
 | `tests/fixtures/` | Small synthetic input files (e.g. ROADMAP shapes for the importer) |
 | `docs/` | Durable design notes, one topic per file |
 | `tools/` | Dev-only scripts, if any are ever needed |

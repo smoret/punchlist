@@ -130,7 +130,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_show(args: argparse.Namespace) -> int:
     """Print one issue's file, or with --json its fields plus `body`."""
     config: Config = _load()
-    path: Path = config.issues_path / f"{resolve_id(config, args.id)}.md"
+    path: Path = config.issue_path(resolve_id(config, args.id))
     text: str = read_text(path)
     issue: Issue = parse_issue(text, config, path)
     if args.json:
@@ -143,7 +143,7 @@ def cmd_show(args: argparse.Namespace) -> int:
 def cmd_close(args: argparse.Namespace) -> int:
     """Set an issue's status to closed, changing only that line."""
     config: Config = _load()
-    path: Path = config.issues_path / f"{resolve_id(config, args.id)}.md"
+    path: Path = config.issue_path(resolve_id(config, args.id))
     issue: Issue = read_issue(path, config)
     if issue.status == "closed":
         print(f"{issue.id} already closed")
@@ -201,7 +201,7 @@ def cmd_import_md(args: argparse.Namespace) -> int:
     if plan.missing_categories:
         config = add_categories(config.root, plan.missing_categories)
     for issue in plan.issues:  # validate every issue before writing any
-        parse_issue(format_issue(issue, config), config, config.issues_path / f"{issue.id}.md")
+        parse_issue(format_issue(issue, config), config, config.issue_path(issue.id))
     for issue in plan.issues:
         write_issue(issue, config, create=True)
     print(f"created {_count(len(plan.issues), 'issue')}")

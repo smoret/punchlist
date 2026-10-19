@@ -30,6 +30,11 @@ include = ["punchlist*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Tests import shared helpers as `from helpers import ...`.
+pythonpath = ["tests"]
+
+[tool.pyright]
+extraPaths = ["tests"]
 
 [tool.pylint."messages control"]
 # Complexity metrics are refactor-time signals, not defects.

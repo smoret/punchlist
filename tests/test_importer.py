@@ -100,8 +100,9 @@ def test_fixed_fields(plan: ImportPlan) -> None:
 
 
 def test_body_is_full_text_with_links_rewritten(plan: ImportPlan) -> None:
+    # Relative to the issue's bucket directory, issues/0/, not to issues/.
     assert _by_title(plan)["Bold task"].body == (
-        "**Bold task** (ref 1.2) -- body with a [link](../docs/x.md#part) and "
+        "**Bold task** (ref 1.2) -- body with a [link](../../docs/x.md#part) and "
         "[web](https://example.com) and [anchor](#here).\n"
     )
     assert _by_title(plan)["Plain sentence task"].body == (
@@ -245,7 +246,7 @@ def test_cli_imports_with_add_categories(roadmap: Path, config: Config,
     assert main(["import-md", "ROADMAP.md", "--add-categories"]) == 0
     assert capsys.readouterr().out.endswith("created 13 issues\n")
     assert load_config(config.root).categories == ("tooling", "docs", "core-engine", "web-and-ui")
-    assert len(list(config.issues_path.glob("*.md"))) == 13
+    assert len(list(config.issues_path.glob("*/*.md"))) == 13
     assert main(["check"]) == 0
     assert capsys.readouterr().out == "13 issues ok\n"
     assert main(["list", "--type", "epic", "--json"]) == 0
@@ -266,7 +267,7 @@ def test_cli_unclassified(roadmap: Path, config: Config, capsys: pytest.CaptureF
     assert not config.issues_path.exists()
     capsys.readouterr()
     assert main(["import-md", "ROADMAP.md", "--skip-unclassified"]) == 0
-    assert len(list(config.issues_path.glob("*.md"))) == 1
+    assert len(list(config.issues_path.glob("*/*.md"))) == 1
 
 
 def test_cli_missing_file(roadmap: Path, capsys: pytest.CaptureFixture[str]) -> None:

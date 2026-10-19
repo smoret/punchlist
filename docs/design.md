@@ -27,13 +27,17 @@ The deciding requirement: **issue changes are files in the project's own git rep
 <project root>/
   punchlist.json            # config; its presence marks the root
   issues/                   # configurable via "issues_dir"
-    pl-7k3qx.md             # one file per issue, named by id only
-    pl-7k3qx/comments/      # planned: one file per comment
-      20261018T1412-claude.md
+    7/                      # bucket: the first `fanout` characters after the prefix
+      pl-7k3qx.md           # one file per issue, named by id only
+      pl-7k3qx/comments/    # planned: one file per comment, in the issue's bucket
+        20261018T1412-claude.md
 ```
 
 - The root is found by walking up from the working directory to the nearest `punchlist.json`, the way git finds `.git`.
 - Filenames are the id only; a title in the filename would turn every rename into a file move.
+- **Buckets** keep every folder small. GitHub's web UI lists only the first 1,000 entries in a folder, and a tracker's issues outlive that quickly since closed issues stay on disk. The bucket is the first `fanout` characters of the id's random part -- not the prefix, which is constant and would put everything in one folder. With the default `fanout` of 1 there are 32 buckets, so a folder reaches 1,000 entries at about 32,000 issues.
+- Buckets had to land before the first real import: moving files later would put a rename of every issue into history. Changing `fanout` on an existing project has the same cost, so `check` treats a file in the wrong bucket as an error rather than quietly following it.
+- One function maps an id to its path (`Config.issue_path`); nothing else builds issue paths. Short-id lookup searches every bucket.
 - Status is a field, not a folder, for the same reason.
 - Closed issues stay on disk with `status: closed`; `list` shows open ones by default.
 - Files are UTF-8, written with the platform's line endings so a Windows checkout under `core.autocrlf` sees no churn.
@@ -75,7 +79,7 @@ Fields are written in config order, so diffs stay minimal and a file punchlist w
 - `<prefix>-<n chars>`. The prefix (lowercase letters and digits) and length (default 5) come from config.
 - Lowercase Crockford base32 (`0-9a-z` minus `i`, `l`, `o`, `u`), drawn with `secrets`.
 - `new` redraws if the file already exists, so a collision within one checkout is impossible. The remaining risk is two unmerged branches minting the same id: at 5 chars (about 33M ids) that's roughly 0.0006% for 20 concurrent creations, and it surfaces loudly as a git add/add conflict.
-- `check` validates that every header parses, each `id:` matches its filename (which makes ids unique), every `parent` exists, and no chain of parents loops. It reports every problem, one `path:line: message` per line, and exits 1 if there are any. Projects can run it as a test.
+- `check` validates that every file is in its bucket, every header parses, each `id:` matches its filename (which, with buckets enforced, makes ids unique), every `parent` exists, and no chain of parents loops. It reports every problem, one `path:line: message` per line, and exits 1 if there are any. Projects can run it as a test.
 
 ## Config (`punchlist.json`)
 
@@ -85,6 +89,7 @@ Everything enumerable is config, so new categories, types, or priorities need no
 {
   "prefix": "pl",
   "id_length": 5,
+  "fanout": 1,
   "issues_dir": "issues",
   "fields": ["id", "title", "type", "status", "priority", "category", "parent", "labels", "created"],
   "list_fields": ["labels"],
@@ -96,6 +101,7 @@ Everything enumerable is config, so new categories, types, or priorities need no
 ```
 
 - Every key is required and unknown keys are errors.
+- `fanout` is the bucket width, from 1 to `id_length`: 1 gives 32 buckets, 2 gives 1,024. Choose it before the first issue; see Storage layout.
 - `fields` sets the allowed header fields and their write order. It must include the required five; extra custom fields are allowed.
 - The enumerated fields are `type`, `status`, `priority`, and `category`, validated against `types`, `statuses`, `priorities`, and `categories`. None of them may be a list field.
 - `priorities` is ordered highest first, so sorting works.
@@ -123,7 +129,7 @@ Titles and bodies:
 - The title is the first `**bold**` span, minus a trailing `.` or `:`. Text after the bold (`(ref 7.16)`, `, each ...`) stays in the body.
 - A plain item's title is the text before the first ` -- `, `: `, `; `, or sentence end. Over 100 characters, it is cut at a word boundary with `...`.
 - The body is the item's full text verbatim, bold title included, then its continuations and notes in document order. Nothing in the item is lost; the title is repeated once.
-- Relative links are rewritten from the source file's directory to the issues directory (`docs/x.md` -> `../docs/x.md`). Absolute URLs, root-relative paths, and `#anchor`-only links are left alone.
+- Relative links are rewritten from the source file's directory to the issue's bucket directory (`docs/x.md` -> `../../docs/x.md`). Absolute URLs, root-relative paths, and `#anchor`-only links are left alone.
 
 It fails closed. Prose outside any item (a section's intro paragraphs, say), a checkbox other than `[ ]`, a note with no parent, a bold title with no closing `**`, an unexpected heading, and tab indentation are each reported with their lines, and a real run writes nothing while any remain. Prose under a `##` has no home in an issue tracker, so it is refused rather than dropped: move it (to `docs/`, say) or pass `--skip-unclassified`.
 

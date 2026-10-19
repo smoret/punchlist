@@ -14,8 +14,8 @@ Nested bullets get `parent:` set to the nearest enclosing task or epic. The
 title is the first `**bold**` span, or for a plain item the text before the
 first ` -- `, `: `, `; `, or sentence end, cut to 100 characters. The body
 is the item's full text, verbatim, then its continuations and notes, with
-relative links rewritten from the source file's directory to the issues
-directory.
+relative links rewritten from the source file's directory to the issue's
+bucket directory.
 
 It fails closed: anything else -- prose outside an item, a checked or
 malformed checkbox, a note with no parent, an unexpected heading, tab
@@ -266,9 +266,11 @@ def plan_import(text: str, source: Path, config: Config, today: str,
     issues: list[Issue] = []
     for node in items:
         ids[node.line] = new_id(config, draw, ids.values())
+        # Links are relative to the file's own directory: its bucket.
+        issue_dir: Path = config.issue_path(ids[node.line]).parent
         fields: dict[str, FieldValue] = {
             "id": ids[node.line],
-            "title": rewrite_links(titles[node.line], source_dir, config.issues_path),
+            "title": rewrite_links(titles[node.line], source_dir, issue_dir),
             "type": "task" if node.checkbox else "epic",
             "status": "open",
             "created": today,
@@ -279,7 +281,7 @@ def plan_import(text: str, source: Path, config: Config, today: str,
             fields["parent"] = ids[node.parent.line]
         if node.label is not None:
             fields["labels"] = [node.label]
-        issues.append(Issue(fields, _body(node, source_dir, config.issues_path)))
+        issues.append(Issue(fields, _body(node, source_dir, issue_dir)))
 
     needed: list[str] = list(dict.fromkeys(n.category for n in items if n.category))
     return ImportPlan(

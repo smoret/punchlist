@@ -26,6 +26,7 @@ def test_find_root_fails_without_config(tmp_path: Path) -> None:
 def test_load_default(config: Config, root: Path) -> None:
     assert config.prefix == "pl"
     assert config.id_length == 5
+    assert config.fanout == 1
     assert config.issues_path == root / "issues"
     assert config.priorities == ("high", "medium", "low")
     assert config.allowed("category") == ("tooling", "docs")
@@ -52,6 +53,10 @@ def _parse(**changes: Any) -> Config:
         ({"prefix": ""}, "non-empty string"),
         ({"id_length": 0}, "positive integer"),
         ({"id_length": True}, "positive integer"),
+        ({"fanout": 0}, r"fanout must be an integer from 1 to id_length \(5\)"),
+        ({"fanout": 6}, "fanout must be"),
+        ({"fanout": True}, "fanout must be"),
+        ({"fanout": "1"}, "fanout must be"),
         ({"fields": ["id", "title", "type", "status"]}, "required field.*created"),
         ({"fields": ["id", "title", "type", "status", "created", "Bad"]}, "field name"),
         ({"list_fields": ["nope"]}, "not in fields"),
@@ -67,6 +72,25 @@ def _parse(**changes: Any) -> Config:
 def test_rejects(changes: dict[str, Any], message: str) -> None:
     with pytest.raises(PunchError, match=message):
         _parse(**changes)
+
+
+@pytest.mark.parametrize(
+    ("fanout", "issue_id", "expected"),
+    [
+        (1, "pl-7k3qx", "issues/7/pl-7k3qx.md"),
+        (2, "pl-7k3qx", "issues/7k/pl-7k3qx.md"),
+        (5, "pl-7k3qx", "issues/7k3qx/pl-7k3qx.md"),
+        (1, "old-ab", "issues/a/old-ab.md"),  # an earlier prefix still buckets on its random part
+    ],
+)
+def test_issue_path(fanout: int, issue_id: str, expected: str) -> None:
+    assert _parse(fanout=fanout).issue_path(issue_id).as_posix() == expected
+
+
+@pytest.mark.parametrize("issue_id", ["notes", "pl-", "pl-a"])
+def test_issue_path_rejects(issue_id: str) -> None:
+    with pytest.raises(PunchError, match="needs a '-' and at least 2 characters after it"):
+        _parse(fanout=2).issue_path(issue_id)
 
 
 def test_rejects_missing_key() -> None:

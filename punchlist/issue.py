@@ -215,21 +215,50 @@ def read_issue(path: Path, config: Config) -> Issue:
     return parse_issue(read_text(path), config, path)
 
 
-def load_issues(config: Config) -> list[Issue]:
-    """Every issue in the issues directory, in filename order. One bad file fails the lot."""
+def issue_files(config: Config) -> list[Path]:
+    """Every `.md` file in the issues directory or one of its buckets, placed right or not.
+
+    Files directly in the issues directory are included so a misplaced one is
+    an error rather than invisible. Deeper files (comments) are not issues.
+    """
     if not config.issues_path.is_dir():
         return []
-    return [read_issue(path, config) for path in sorted(config.issues_path.glob("*.md"))]
+    found: list[Path] = [*config.issues_path.glob("*.md"), *config.issues_path.glob("*/*.md")]
+    return sorted(path for path in found if path.is_file())
+
+
+def placement_error(path: Path, config: Config) -> PunchError | None:
+    """Why the issue file at `path` isn't where its filename says it belongs, or None."""
+    try:
+        expected: Path = config.issue_path(path.stem)
+    except PunchError as exc:
+        return PunchError(exc.message, path)
+    if path == expected:
+        return None
+    return PunchError(
+        f"in the wrong bucket; it belongs at {expected.relative_to(config.root).as_posix()}", path
+    )
+
+
+def load_issues(config: Config) -> list[Issue]:
+    """Every issue, in bucket and filename order. One bad or misplaced file fails the lot."""
+    issues: list[Issue] = []
+    for path in issue_files(config):
+        error: PunchError | None = placement_error(path, config)
+        if error is not None:
+            raise error
+        issues.append(read_issue(path, config))
+    return issues
 
 
 def write_issue(issue: Issue, config: Config, *, create: bool = False) -> Path:
-    """Write an issue to `<issues_dir>/<id>.md`, in the platform's line endings.
+    """Write an issue to `config.issue_path(id)`, in the platform's line endings.
 
     The text is parsed back before writing, so this never writes a file that
     `punch check` would reject. With `create`, an existing file is an error
     rather than overwritten.
     """
-    path: Path = config.issues_path / f"{issue.id}.md"
+    path: Path = config.issue_path(issue.id)
     text: str = format_issue(issue, config)
     parse_issue(text, config, path)
     path.parent.mkdir(parents=True, exist_ok=True)

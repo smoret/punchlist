@@ -32,7 +32,7 @@ Free-form markdown body.
 Reasons.
 """
 
-PATH = Path("issues/pl-7k3qx.md")
+PATH = Path("issues/7/pl-7k3qx.md")
 
 
 def test_parse_sample(config: Config) -> None:
@@ -67,7 +67,7 @@ def test_empty_body_round_trips(config: Config) -> None:
 def test_write_round_trips_bytes(config: Config) -> None:
     issue = parse_issue(SAMPLE, config, PATH)
     path = write_issue(issue, config)
-    assert path == config.issues_path / "pl-7k3qx.md"
+    assert path == config.issues_path / "7" / "pl-7k3qx.md"
     first: bytes = path.read_bytes()
     write_issue(read_issue(path, config), config)
     assert path.read_bytes() == first

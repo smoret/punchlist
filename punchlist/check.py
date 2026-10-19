@@ -1,9 +1,9 @@
 """`punch check`: validate every issue file and report every problem, not just the first.
 
-Per file it reports the first parse error (the parser stops there), then
-checks across files: each `id:` matches its filename, which also makes ids
-unique; each `parent` names an existing issue file; and no chain of parents
-loops back on itself.
+Per file it reports a file outside its bucket and the first parse error (the
+parser stops there), then checks across files: each `id:` matches its
+filename, which with correct buckets also makes ids unique; each `parent`
+names an existing issue file; and no chain of parents loops back on itself.
 """
 
 from __future__ import annotations
@@ -12,20 +12,21 @@ from pathlib import Path
 
 from .config import Config
 from .errors import PunchError
-from .issue import Issue, read_issue
+from .issue import Issue, issue_files, placement_error, read_issue
 
 
 def check_issues(config: Config) -> tuple[int, list[PunchError]]:
     """The number of issue files, and every problem found in them, in file and line order."""
-    if not config.issues_path.is_dir():
-        return 0, []
-    paths: list[Path] = sorted(config.issues_path.glob("*.md"))
+    paths: list[Path] = issue_files(config)
     # Parents are checked against filenames, so a corrupt parent file is one
     # problem rather than one per child.
     stems: set[str] = {path.stem for path in paths}
     problems: list[PunchError] = []
     parsed: dict[str, Issue] = {}
     for path in paths:
+        placement: PunchError | None = placement_error(path, config)
+        if placement is not None:
+            problems.append(placement)
         try:
             issue: Issue = read_issue(path, config)
         except PunchError as exc:
