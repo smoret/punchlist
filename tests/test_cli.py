@@ -109,7 +109,7 @@ def test_new_blank_body_is_empty(in_root: Path, config: Config, capsys: pytest.C
         (["T", "--type", "nope"], "type 'nope' is not one of"),
         (["T", "--type", "bug", "--priority", "urgent"], "priority 'urgent'"),
         (["T", "--type", "bug", "--category", "web"], "category 'web'"),
-        (["T", "--type", "bug", "--parent", "pl-zzzzz"], "parent 'pl-zzzzz' does not exist"),
+        (["T", "--type", "bug", "--parent", "pl-zzzzz"], "no issue matches 'pl-zzzzz'"),
         (["T", "--type", "bug", "--label", "a,,b"], "empty label"),
         (["   ", "--type", "bug"], "title must not be empty"),
         (["a\nb", "--type", "bug"], "single line"),
@@ -218,7 +218,8 @@ def test_list_empty(in_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
         (["--status", "done"], "status 'done' is not one of"),
         (["--type", "tsak"], "type 'tsak'"),
         (["--category", "web"], "category 'web'"),
-        (["--parent", "pl-zzzzz"], "parent 'pl-zzzzz' does not exist"),
+        (["--parent", "pl-zzzzz"], "no issue matches 'pl-zzzzz'"),
+        (["--parent", "pl-"], "ambiguous"),
     ],
 )
 def test_list_rejects(sample: Config, capsys: pytest.CaptureFixture[str],
@@ -233,3 +234,50 @@ def test_list_fails_closed_on_bad_file(sample: Config, capsys: pytest.CaptureFix
     err: str = capsys.readouterr().err
     assert "pl-bad01.md:1: header has no closing" in err
     assert err.rstrip().endswith("(run `punch check` to find corrupt files)")
+
+
+def test_parent_accepts_short_id(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert _list(capsys, "--parent", "epic") == ["pl-low01"]
+    child = _new(capsys, "Another child", "--type", "task", "--parent", "epic")
+    issue = read_issue(sample.issues_path / f"{child}.md", sample)
+    assert issue.text("parent") == "pl-epic1"
+
+
+def test_show_prints_file(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    write_issue(Issue({"id": "pl-body1", "title": "With body", "type": "bug", "status": "open",
+                       "created": "2026-01-01"}, "Café text.\n"), sample)
+    assert main(["show", "body1"]) == 0
+    assert capsys.readouterr().out == (
+        "---\nid: pl-body1\ntitle: With body\ntype: bug\nstatus: open\ncreated: 2026-01-01\n---\n"
+        "\nCafé text.\n"
+    )
+
+
+def test_show_json(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["show", "pl-low01", "--json"]) == 0
+    assert capsys.readouterr().out == (
+        '{"id": "pl-low01", "title": "Low child", "type": "task", "status": "open", '
+        '"priority": "low", "parent": "pl-epic1", "labels": ["a", "b"], "created": "2026-01-01", '
+        '"body": ""}\n'
+    )
+
+
+def test_show_ignores_unrelated_corrupt_file(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    (sample.issues_path / "pl-bad01.md").write_text("junk\n", encoding="utf-8")
+    assert main(["show", "high1"]) == 0
+    assert "High one" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["zzz"], "no issue matches 'zzz'"),
+        (["pl-"], "'pl-' is ambiguous"),
+        (["bad01"], "pl-bad01.md:1: first line must be '---'"),
+    ],
+)
+def test_show_rejects(sample: Config, capsys: pytest.CaptureFixture[str],
+                      args: list[str], message: str) -> None:
+    (sample.issues_path / "pl-bad01.md").write_text("junk\n", encoding="utf-8")
+    assert main(["show", *args]) == 1
+    assert message in capsys.readouterr().err

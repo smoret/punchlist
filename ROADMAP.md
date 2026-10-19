@@ -4,7 +4,6 @@ Planned work for punchlist, in order. **Delete an item when it lands.** This fil
 
 ## Milestone 1: usable
 
-- [ ] **`punch show <id>`** -- prints the issue. Accepts a unique id prefix, like git.
 - [ ] **`punch close <id>`** -- sets `status: closed`.
 - [ ] **`punch check`** -- every file parses, id matches filename, ids unique, enum values valid, `parent` points at an existing issue. Exit 1 on any problem.
 - [ ] **`punch import-md <file>`** -- the roadmap importer described in [docs/design.md](docs/design.md). `--dry-run` first; fails closed on unclassifiable lines. Verified against synthetic fixtures and then a dry run of a real roadmap.

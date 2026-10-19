@@ -16,8 +16,8 @@ from .config import (
     CONFIG_NAME, PREFIX_RE, Config, default_config, find_root, load_config, parse_config,
 )
 from .errors import PunchError
-from .ids import new_id
-from .issue import FieldValue, Issue, load_issues, write_issue
+from .ids import new_id, resolve_id
+from .issue import FieldValue, Issue, load_issues, parse_issue, write_issue
 
 # `list` filters on these scalar fields; each has a flag of the same name.
 FILTER_FIELDS: tuple[str, ...] = ("status", "type", "category", "priority", "parent")
@@ -59,10 +59,12 @@ def cmd_new(args: argparse.Namespace) -> int:
     if not title:
         raise PunchError("title must not be empty")
     fields: dict[str, str] = {"title": title, "status": "open"}
-    for name in ("type", "priority", "category", "parent"):
+    for name in ("type", "priority", "category"):
         value: str | None = getattr(args, name)
         if value is not None:
             fields[name] = value
+    if args.parent is not None:
+        fields["parent"] = resolve_id(config, args.parent)
     # Checked before writing so the error names the flag, not a file never written.
     for name, value in fields.items():
         if name not in config.fields:
@@ -70,9 +72,6 @@ def cmd_new(args: argparse.Namespace) -> int:
         error: str | None = config.choice_error(name, value)
         if error is not None:
             raise PunchError(error)
-    parent: str | None = fields.get("parent")
-    if parent is not None and not (config.issues_path / f"{parent}.md").is_file():
-        raise PunchError(f"parent {parent!r} does not exist")
     fields["created"] = datetime.date.today().isoformat()
     fields["id"] = new_id(config)
     issue_fields: dict[str, FieldValue] = dict(fields)
@@ -101,12 +100,9 @@ def cmd_list(args: argparse.Namespace) -> int:
         error: str | None = config.choice_error(name, value)
         if error is not None:
             raise PunchError(error)
-        wanted[name] = value
+        wanted[name] = resolve_id(config, value) if name == "parent" else value
     if "status" not in wanted and not args.all:
         wanted["status"] = "open"
-    parent: str | None = wanted.get("parent")
-    if parent is not None and all(issue.id != parent for issue in issues):
-        raise PunchError(f"parent {parent!r} does not exist")
     labels: list[str] = args.label or []
     if labels and "labels" not in config.list_fields:
         raise PunchError("labels is not a list field in the config")
@@ -122,11 +118,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     ))
 
     if args.json:
-        rows: list[dict[str, FieldValue]] = [
-            {name: issue.fields[name] for name in config.fields if name in issue.fields}
-            for issue in matches
-        ]
-        print(json.dumps(rows, ensure_ascii=False))
+        print(json.dumps([_json_fields(issue, config) for issue in matches], ensure_ascii=False))
         return 0
     for issue in matches:
         columns: list[str] = [issue.id] + [
@@ -134,6 +126,24 @@ def cmd_list(args: argparse.Namespace) -> int:
         ]
         print(" ".join(columns), issue.title)
     return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    """Print one issue's file, or with --json its fields plus `body`."""
+    config: Config = _load()
+    path: Path = config.issues_path / f"{resolve_id(config, args.id)}.md"
+    text: str = path.read_text(encoding="utf-8")
+    issue: Issue = parse_issue(text, config, path)
+    if args.json:
+        print(json.dumps({**_json_fields(issue, config), "body": issue.body}, ensure_ascii=False))
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+def _json_fields(issue: Issue, config: Config) -> dict[str, FieldValue]:
+    """An issue's header fields in config order, for --json output."""
+    return {name: issue.fields[name] for name in config.fields if name in issue.fields}
 
 
 def _read_body(args: argparse.Namespace) -> str:
@@ -189,6 +199,11 @@ def build_parser() -> argparse.ArgumentParser:
     lst.add_argument("--label", action="append", help="repeatable; issues must have every label")
     lst.add_argument("--json", action="store_true", help="a JSON array of header fields")
     lst.set_defaults(func=cmd_list)
+
+    show = sub.add_parser("show", help="print an issue")
+    show.add_argument("id", help="an issue id, or any unique start of one")
+    show.add_argument("--json", action="store_true", help="header fields plus body as JSON")
+    show.set_defaults(func=cmd_show)
 
     return parser
 

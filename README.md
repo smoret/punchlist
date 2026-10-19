@@ -20,7 +20,8 @@ punch new "Title" --type task --category tooling   # prints the new id
 punch new "Title" --type bug --body-file -         # body from stdin
 punch list                        # open issues: id status type priority category title
 punch list --all --label cli --json
-punch show pl-7k3qx
+punch show pl-7k3qx                # or any unique start: pl-7k, 7k3
+punch show 7k3 --json             # header fields plus body
 punch close pl-7k3qx
 punch check                       # validate every issue file
 ```
