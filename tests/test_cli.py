@@ -11,7 +11,7 @@ import pytest
 from helpers import write_raw
 
 from punchlist.cli import main
-from punchlist.config import CONFIG_NAME, Config, load_config
+from punchlist.config import CONFIG_NAME, Config, default_config, load_config
 from punchlist.issue import FieldValue, Issue, read_issue, write_issue
 
 
@@ -469,6 +469,51 @@ def test_search_rejects(searchable: Config, capsys: pytest.CaptureFixture[str],
                         args: list[str], message: str) -> None:
     assert main(["search", *args]) == 1
     assert message in capsys.readouterr().err
+
+
+def test_new_with_rank(in_root: Path, config: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    issue_id = _new(capsys, "T", "--type", "bug", "--priority", "high", "--rank", "2.5")
+    assert read_issue(config.issue_path(issue_id), config).text("rank") == "2.5"
+    assert main(["new", "T", "--type", "bug", "--rank", "soon"]) == 1
+    assert "rank 'soon' is not a number like 2 or 2.5" in capsys.readouterr().err
+
+
+def test_set_rank(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert _set(capsys, "high1", "rank=3.75") == "updated pl-high1: rank\n"
+    assert read_issue(sample.issue_path("pl-high1"), sample).rank == 3.75
+    assert main(["set", "high1", "rank=1,2"]) == 1
+    assert "rank '1,2' is not a number" in capsys.readouterr().err
+    assert _set(capsys, "high1", "rank=") == "updated pl-high1: rank\n"
+    assert read_issue(sample.issue_path("pl-high1"), sample).rank is None
+
+
+def test_sort_priority_then_rank_then_created(in_root: Path, config: Config,
+                                              capsys: pytest.CaptureFixture[str]) -> None:
+    _make(config, "pl-r0001", "high, unranked, older", priority="high", created="2025-01-01")
+    _make(config, "pl-r0002", "high, rank 10", priority="high", rank="10")
+    _make(config, "pl-r0003", "high, rank 2", priority="high", rank="2")
+    _make(config, "pl-r0004", "high, rank -1.5", priority="high", rank="-1.5")
+    _make(config, "pl-r0005", "high, rank 2.25", priority="high", rank="2.25")
+    _make(config, "pl-r0006", "low, rank 1", priority="low", rank="1")
+    _make(config, "pl-r0007", "no priority, rank 1", rank="1")
+    assert _list(capsys) == [
+        "pl-r0004", "pl-r0003", "pl-r0005", "pl-r0002", "pl-r0001",  # 10 after 2.25: numeric
+        "pl-r0006", "pl-r0007",
+    ]
+    assert main(["list", "--priority", "low", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["rank"] == "1"
+
+
+def test_set_rank_needs_the_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                  capsys: pytest.CaptureFixture[str]) -> None:
+    # A config written before rank existed has no rank field; set says so instead of writing.
+    data = default_config("pl")
+    data["fields"].remove("rank")
+    (tmp_path / CONFIG_NAME).write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    issue_id = _new(capsys, "T", "--type", "bug")
+    assert main(["set", issue_id, "rank=1"]) == 1
+    assert "rank is not a field in the config" in capsys.readouterr().err
 
 
 def test_search_fails_closed_on_bad_file(searchable: Config, capsys: pytest.CaptureFixture[str]) -> None:

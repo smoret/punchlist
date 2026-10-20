@@ -68,6 +68,9 @@ The header is **deliberately not YAML** -- no PyYAML, no quoting, no type guessi
 - One blank line separates the header from the body and is not part of the body.
 - Required: `id`, `title`, `type`, `status`, `created`. Everything else is optional; an absent field is omitted, never written empty.
 - `created` is a `YYYY-MM-DD` date. There are no `updated` or `closed` dates; git history has them. Add one only when a query needs it.
+- `rank` is an optional plain decimal (`2`, `-1`, `3.75`; no exponents, `nan`, or `inf`), kept as written. Priorities are a short list, so items within one priority have no order of their own; a rank gives them one, and a number can always fit between two neighbors (`2.5` between `2` and `3`) without renumbering.
+
+`list` and `search` sort by priority (config order), then rank, then `created`, then id; an issue missing a priority or rank sorts after those that have one.
 - The title lives in the header, not as a `# heading` in the body, so listing reads only headers and the title has a single source.
 
 Errors, each naming file and line: a line without `: `, an unknown field, a repeated field, an empty value or list item, an enum value the config doesn't allow, a bad date, a missing required field.
@@ -91,7 +94,7 @@ Everything enumerable is config, so new categories, types, or priorities need no
   "id_length": 5,
   "fanout": 1,
   "issues_dir": "issues",
-  "fields": ["id", "title", "type", "status", "priority", "category", "parent", "labels", "created"],
+  "fields": ["id", "title", "type", "status", "priority", "rank", "category", "parent", "labels", "created"],
   "list_fields": ["labels"],
   "types": ["epic", "feature", "task", "bug", "subtask"],
   "statuses": ["open", "closed"],
@@ -105,6 +108,7 @@ Everything enumerable is config, so new categories, types, or priorities need no
 - `fields` sets the allowed header fields and their write order. It must include the required five; extra custom fields are allowed.
 - The enumerated fields are `type`, `status`, `priority`, and `category`, validated against `types`, `statuses`, `priorities`, and `categories`. None of them may be a list field.
 - `priorities` is ordered highest first, so sorting works.
+- `rank` is an ordinary entry in `fields`, so a config written before it existed has no rank until `"rank"` is added there by hand; until then `set rank=` is refused as an unknown field. It may not be a list field.
 - `statuses` must include `open` and `closed`, which the commands rely on.
 - `categories` may be empty, in which case any `category:` value is an error.
 
@@ -123,6 +127,7 @@ Epics and subtasks are expressed with `parent: <id>`. `subtask` exists as a type
 - `- ...` with no checkbox and no children ("Out of scope: ...", "**Waits for its runner**: ..."): a note, folded into its parent's body as a bullet.
 - An indented paragraph or table after a blank line belongs to the item it is indented under, as in markdown: two spaces past a bullet's column. It is added to that item's body.
 - Nested bullets get `parent:` set to the nearest enclosing task or epic, at any depth.
+- If the config has a `rank` field, each issue's rank is its position among the imported items (1, 2, 3, ...), so the source's order survives; a checklist's order is often the only record of what comes next. Without the field the order is dropped, and the report says so.
 
 Titles and bodies:
 

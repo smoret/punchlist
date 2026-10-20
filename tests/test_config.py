@@ -61,6 +61,7 @@ def _parse(**changes: Any) -> Config:
         ({"fields": ["id", "title", "type", "status", "created", "Bad"]}, "field name"),
         ({"list_fields": ["nope"]}, "not in fields"),
         ({"list_fields": ["status"]}, "cannot be a list field"),
+        ({"list_fields": ["rank"]}, "'rank' cannot be a list field"),
         ({"types": []}, "types must not be empty"),
         ({"statuses": ["open", "done"]}, "'closed'"),
         ({"categories": ["a", "a"]}, "duplicate"),

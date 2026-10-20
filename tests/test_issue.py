@@ -109,6 +109,11 @@ BASE: tuple[str, ...] = ("id: pl-aaaaa", "title: T", "type: bug", "status: open"
         (_header(*BASE[:4], "created: 2026-13-01"), 6, "not a YYYY-MM-DD date"),
         (_header(*BASE[:4], "created: 2026-1-01"), 6, "not a YYYY-MM-DD date"),
         (_header(*BASE[:4]), 6, "missing required field.*created"),
+        (_header(*BASE, "rank: 1e3"), 7, "rank '1e3' is not a number like 2 or 2.5"),
+        (_header(*BASE, "rank: .5"), 7, "rank '.5' is not a number"),
+        (_header(*BASE, "rank: nan"), 7, "rank 'nan' is not a number"),
+        (_header(*BASE, "rank: +2"), 7, r"rank '\+2' is not a number"),
+        (_header(*BASE, "rank: 2."), 7, r"rank '2\.' is not a number"),
     ],
 )
 def test_fails_closed_with_line(config: Config, text: str, line: int, message: str) -> None:
@@ -185,3 +190,14 @@ def test_edit_header_rejects(config: Config, changes: dict[str, str | None], mes
 def test_value_kept_verbatim(config: Config) -> None:
     issue = parse_issue(_header(*BASE[:1], "title:  'x' -- \"y\" #z ", *BASE[2:]), config, PATH)
     assert issue.title == " 'x' -- \"y\" #z "
+
+
+@pytest.mark.parametrize(("text", "number"), [("2", 2.0), ("-3", -3.0), ("3.75", 3.75), ("007", 7.0)])
+def test_rank(config: Config, text: str, number: float) -> None:
+    issue = parse_issue(_header(*BASE, f"rank: {text}"), config, PATH)
+    assert issue.text("rank") == text  # kept as written
+    assert issue.rank == number
+
+
+def test_unranked(config: Config) -> None:
+    assert parse_issue(_header(*BASE), config, PATH).rank is None

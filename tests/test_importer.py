@@ -99,6 +99,19 @@ def test_fixed_fields(plan: ImportPlan) -> None:
     assert issue.text("created") == TODAY
 
 
+def test_rank_is_source_position(plan: ImportPlan) -> None:
+    assert plan.ranked
+    assert [issue.text("rank") for issue in plan.issues] == [str(n) for n in range(1, 14)]
+    assert _by_title(plan)["Deep child"].text("rank") == "13"
+
+
+def test_no_rank_field_no_ranks(config: Config) -> None:
+    unranked = Config(**{**config.__dict__, "fields": tuple(f for f in config.fields if f != "rank")})
+    plan = _plan(unranked, "## Docs\n\n- [ ] **A**\n- [ ] **B**\n")
+    assert not plan.ranked
+    assert [issue.text("rank") for issue in plan.issues] == [None, None]
+
+
 def test_body_is_full_text_with_links_rewritten(plan: ImportPlan) -> None:
     # Relative to the issue's bucket directory, issues/0/, not to issues/.
     assert _by_title(plan)["Bold task"].body == (
@@ -252,6 +265,29 @@ def test_cli_imports_with_add_categories(roadmap: Path, config: Config,
     assert main(["list", "--type", "epic", "--json"]) == 0
     epics = json.loads(capsys.readouterr().out)
     assert sorted(e["title"] for e in epics) == ["An epic", "Nested epic", "Second epic"]
+
+
+def test_cli_imports_in_source_order(roadmap: Path, config: Config,
+                                     capsys: pytest.CaptureFixture[str]) -> None:
+    roadmap.write_text("## Docs\n\n- [ ] **Zebra**\n- [ ] **Apple**\n- [ ] **Mango**\n",
+                       encoding="utf-8")
+    assert main(["import-md", "ROADMAP.md"]) == 0
+    capsys.readouterr()
+    assert main(["list"]) == 0
+    titles = [line.split(" ", 5)[5] for line in capsys.readouterr().out.splitlines()]
+    assert titles == ["Zebra", "Apple", "Mango"]
+
+
+def test_cli_says_when_order_is_not_kept(roadmap: Path, config: Config,
+                                         capsys: pytest.CaptureFixture[str]) -> None:
+    data = json.loads((config.root / CONFIG_NAME).read_text(encoding="utf-8"))
+    data["fields"].remove("rank")
+    (config.root / CONFIG_NAME).write_text(json.dumps(data), encoding="utf-8")
+    roadmap.write_text("## Docs\n\n- [ ] **T**\n", encoding="utf-8")
+    assert main(["import-md", "ROADMAP.md", "--dry-run"]) == 0
+    assert capsys.readouterr().out.endswith(
+        'source order not kept: add "rank" to fields in punchlist.json to keep it\n'
+    )
 
 
 def test_cli_unclassified(roadmap: Path, config: Config, capsys: pytest.CaptureFixture[str]) -> None:

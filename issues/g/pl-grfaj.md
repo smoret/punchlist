@@ -2,7 +2,7 @@
 id: pl-grfaj
 title: Rank: a fine-grained sort key beside priority
 type: feature
-status: open
+status: closed
 created: 2026-10-19
 ---
 

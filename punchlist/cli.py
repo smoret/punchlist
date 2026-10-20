@@ -21,7 +21,7 @@ from .errors import PunchError
 from .ids import new_id, resolve_id
 from .importer import ImportPlan, plan_import
 from .issue import (
-    FieldValue, Issue, format_issue, load_issues, parse_issue, read_issue, read_text,
+    FieldValue, Issue, format_issue, load_issues, parse_issue, rank_error, read_issue, read_text,
     update_issue, write_issue,
 )
 
@@ -61,7 +61,7 @@ def cmd_new(args: argparse.Namespace) -> int:
     if not title:
         raise PunchError("title must not be empty")
     fields: dict[str, str] = {"title": title, "status": "open"}
-    for name in ("type", "priority", "category"):
+    for name in ("type", "priority", "rank", "category"):
         value: str | None = getattr(args, name)
         if value is not None:
             fields[name] = value
@@ -72,6 +72,8 @@ def cmd_new(args: argparse.Namespace) -> int:
         if name not in config.fields:
             raise PunchError(f"{name} is not a field in the config")
         error: str | None = config.choice_error(name, value)
+        if error is None and name == "rank":
+            error = rank_error(value)
         if error is not None:
             raise PunchError(error)
     fields["created"] = datetime.date.today().isoformat()
@@ -136,11 +138,16 @@ def _select(config: Config, issues: list[Issue], args: argparse.Namespace) -> li
         if all(issue.text(name) == value for name, value in wanted.items())
         and all(label in issue.items("labels") for label in labels)
     ]
-    rank: dict[str, int] = {p: i for i, p in enumerate(config.priorities)}
-    matches.sort(key=lambda issue: (
-        rank.get(issue.text("priority") or "", len(rank)), issue.text("created") or "", issue.id,
-    ))
+    matches.sort(key=lambda issue: _sort_key(config, issue))
     return matches
+
+
+def _sort_key(config: Config, issue: Issue) -> tuple[int, bool, float, str, str]:
+    """Priority in config order, then rank, then created, then id; missing values sort last."""
+    priority: str | None = issue.text("priority")
+    level: int = config.priorities.index(priority) if priority else len(config.priorities)
+    rank: float | None = issue.rank
+    return (level, rank is None, rank or 0.0, issue.text("created") or "", issue.id)
 
 
 def _print_issues(config: Config, issues: list[Issue], as_json: bool) -> None:
@@ -225,6 +232,8 @@ def _set_value(config: Config, issue_id: str, name: str, value: str) -> str | No
             raise PunchError(f"empty item in {name}")
         return ", ".join(items)
     error: str | None = config.choice_error(name, value)
+    if error is None and name == "rank":
+        error = rank_error(value)
     if error is not None:
         raise PunchError(error)
     if name == "parent":
@@ -278,6 +287,8 @@ def cmd_import_md(args: argparse.Namespace) -> int:
     if plan.missing_categories:
         print(f"categories missing from {CONFIG_NAME} (add them with --add-categories): "
               + ", ".join(plan.missing_categories))
+    if not plan.ranked:
+        print(f"source order not kept: add \"rank\" to fields in {CONFIG_NAME} to keep it")
 
     blocked: bool = (bool(plan.unclassified) and not args.skip_unclassified) or (
         bool(plan.missing_categories) and not args.add_categories)
@@ -346,6 +357,7 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("title")
     new.add_argument("--type", required=True)
     new.add_argument("--priority")
+    new.add_argument("--rank", help="sort key within a priority: a number like 2 or 2.5")
     new.add_argument("--category")
     new.add_argument("--parent", help="id of the parent issue")
     new.add_argument("--label", action="append", help="repeatable; commas also separate labels")

@@ -35,6 +35,8 @@ from .errors import PunchError
 
 DELIMITER = "---"
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+# Plain decimals only (-2, 3, 3.75): no exponents, nan, or inf, so a rank reads as written.
+RANK_RE = re.compile(r"-?\d+(\.\d+)?")
 
 FieldValue = str | list[str]
 
@@ -80,6 +82,12 @@ class Issue:
     def status(self) -> str:
         """The status, one of the config's `statuses`."""
         return self._required("status")
+
+    @property
+    def rank(self) -> float | None:
+        """The optional `rank` sort key as a number; None if unranked."""
+        value: str | None = self.text("rank")
+        return None if value is None else float(value)
 
     def _required(self, name: str) -> str:
         value: str | None = self.text(name)
@@ -138,7 +146,18 @@ def _parse_line(line: str, config: Config, path: Path, lineno: int) -> tuple[str
         raise PunchError(error, path, lineno)
     if name == "created":
         _check_date(value, path, lineno)
+    if name == "rank":
+        rank: str | None = rank_error(value)
+        if rank is not None:
+            raise PunchError(rank, path, lineno)
     return name, value
+
+
+def rank_error(value: str) -> str | None:
+    """Why `value` isn't a valid rank, or None if it is."""
+    if RANK_RE.fullmatch(value):
+        return None
+    return f"rank {value!r} is not a number like 2 or 2.5"
 
 
 def _check_date(value: str, path: Path, lineno: int) -> None:

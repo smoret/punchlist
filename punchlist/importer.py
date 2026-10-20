@@ -10,7 +10,9 @@ The shapes it reads, by line:
 - An indented paragraph or table after a blank line: a continuation of the
   item it is indented under (markdown's list-item rule), added to its body.
 
-Nested bullets get `parent:` set to the nearest enclosing task or epic. The
+Nested bullets get `parent:` set to the nearest enclosing task or epic. When
+the config has a `rank` field, each issue's rank is its position among the
+imported items (1, 2, 3, ...), so the source's order survives. The
 title is the first `**bold**` span, or for a plain item the text before the
 first ` -- `, `: `, `; `, or sentence end, cut to 100 characters. The body
 is the item's full text, verbatim, then its continuations and notes, with
@@ -102,6 +104,7 @@ class ImportPlan:
     notes: int
     unclassified: list[Unclassified]
     missing_categories: list[str]
+    ranked: bool  # whether each issue's rank records its position in the source
 
     def counts(self, name: str) -> Counter[str]:
         """Planned issues counted by a scalar field; `-` for absent."""
@@ -264,7 +267,8 @@ def plan_import(text: str, source: Path, config: Config, today: str,
     source_dir: Path = source.resolve().parent
     ids: dict[int, str] = {}
     issues: list[Issue] = []
-    for node in items:
+    ranked: bool = "rank" in config.fields
+    for position, node in enumerate(items, 1):
         ids[node.line] = new_id(config, draw, ids.values())
         # Links are relative to the file's own directory: its bucket.
         issue_dir: Path = config.issue_path(ids[node.line]).parent
@@ -281,6 +285,8 @@ def plan_import(text: str, source: Path, config: Config, today: str,
             fields["parent"] = ids[node.parent.line]
         if node.label is not None:
             fields["labels"] = [node.label]
+        if ranked:
+            fields["rank"] = str(position)
         issues.append(Issue(fields, _body(node, source_dir, issue_dir)))
 
     needed: list[str] = list(dict.fromkeys(n.category for n in items if n.category))
@@ -289,4 +295,5 @@ def plan_import(text: str, source: Path, config: Config, today: str,
         notes=sum(1 for n in nodes if n.is_note and n.parent is not None),
         unclassified=_merge(problems, text),
         missing_categories=[c for c in needed if c not in config.categories],
+        ranked=ranked,
     )

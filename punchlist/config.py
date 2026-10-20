@@ -91,7 +91,8 @@ def default_config(prefix: str) -> dict[str, Any]:
         "fanout": 1,
         "issues_dir": "issues",
         "fields": [
-            "id", "title", "type", "status", "priority", "category", "parent", "labels", "created",
+            "id", "title", "type", "status", "priority", "rank", "category", "parent", "labels",
+            "created",
         ],
         "list_fields": ["labels"],
         "types": ["epic", "feature", "task", "bug", "subtask"],
@@ -180,7 +181,7 @@ def parse_config(data: Any, root: Path, path: Path) -> Config:
     for field in list_fields:
         if field not in fields:
             raise PunchError(f"list field {field!r} is not in fields", path)
-        if field in REQUIRED_FIELDS or field in ENUM_FIELDS:
+        if field in REQUIRED_FIELDS or field in ENUM_FIELDS or field == "rank":
             raise PunchError(f"{field!r} cannot be a list field", path)
 
     enums: dict[str, tuple[str, ...]] = {}
