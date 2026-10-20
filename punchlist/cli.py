@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -92,7 +93,29 @@ def cmd_new(args: argparse.Namespace) -> int:
 def cmd_list(args: argparse.Namespace) -> int:
     """Print matching issues, one line each: id status type priority category title."""
     config: Config = _load()
-    issues: list[Issue] = _load_all(config)
+    _print_issues(config, _select(config, _load_all(config), args), args.json)
+    return 0
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    """Like `list`, but only issues whose title or body matches a regex."""
+    config: Config = _load()
+    try:
+        pattern: re.Pattern[str] = re.compile(
+            args.pattern, 0 if args.case_sensitive else re.IGNORECASE
+        )
+    except re.error as exc:
+        raise PunchError(f"invalid regex {args.pattern!r}: {exc}") from None
+    hits: list[Issue] = [
+        issue for issue in _load_all(config)
+        if pattern.search(issue.title) or pattern.search(issue.body)
+    ]
+    _print_issues(config, _select(config, hits, args), args.json)
+    return 0
+
+
+def _select(config: Config, issues: list[Issue], args: argparse.Namespace) -> list[Issue]:
+    """The issues passing `list`'s filter flags, sorted by priority, created, then id."""
     wanted: dict[str, str] = {}
     for name in FILTER_FIELDS:
         value: str | None = getattr(args, name)
@@ -117,16 +140,19 @@ def cmd_list(args: argparse.Namespace) -> int:
     matches.sort(key=lambda issue: (
         rank.get(issue.text("priority") or "", len(rank)), issue.text("created") or "", issue.id,
     ))
+    return matches
 
-    if args.json:
-        print(json.dumps([_json_fields(issue, config) for issue in matches], ensure_ascii=False))
-        return 0
-    for issue in matches:
+
+def _print_issues(config: Config, issues: list[Issue], as_json: bool) -> None:
+    """One line per issue (id status type priority category title), or a JSON array."""
+    if as_json:
+        print(json.dumps([_json_fields(issue, config) for issue in issues], ensure_ascii=False))
+        return
+    for issue in issues:
         columns: list[str] = [issue.id] + [
             issue.text(name) or "-" for name in ("status", "type", "priority", "category")
         ]
         print(" ".join(columns), issue.title)
-    return 0
 
 
 def cmd_show(args: argparse.Namespace) -> int:
@@ -294,6 +320,19 @@ def _read_body(args: argparse.Namespace) -> str:
     return text + "\n" if text.strip() else ""
 
 
+def _add_filters(parser: argparse.ArgumentParser) -> None:
+    """The filter and output flags `list` and `search` share; `_select` reads them."""
+    statuses = parser.add_mutually_exclusive_group()
+    statuses.add_argument("--status", help="only this status (default: open)")
+    statuses.add_argument("--all", action="store_true", help="every status")
+    parser.add_argument("--type")
+    parser.add_argument("--category")
+    parser.add_argument("--priority")
+    parser.add_argument("--parent", help="only children of this issue id")
+    parser.add_argument("--label", action="append", help="repeatable; issues must have every label")
+    parser.add_argument("--json", action="store_true", help="a JSON array of header fields")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The argument parser for every subcommand."""
     parser = argparse.ArgumentParser(prog="punch", description="A file-based issue tracker.")
@@ -318,16 +357,19 @@ def build_parser() -> argparse.ArgumentParser:
     lst = sub.add_parser(
         "list", help="list open issues: id status type priority category title"
     )
-    statuses = lst.add_mutually_exclusive_group()
-    statuses.add_argument("--status", help="only this status (default: open)")
-    statuses.add_argument("--all", action="store_true", help="every status")
-    lst.add_argument("--type")
-    lst.add_argument("--category")
-    lst.add_argument("--priority")
-    lst.add_argument("--parent", help="only children of this issue id")
-    lst.add_argument("--label", action="append", help="repeatable; issues must have every label")
-    lst.add_argument("--json", action="store_true", help="a JSON array of header fields")
+    _add_filters(lst)
     lst.set_defaults(func=cmd_list)
+
+    search = sub.add_parser(
+        "search", help="list open issues whose title or body matches a regex"
+    )
+    search.add_argument(
+        "pattern",
+        help=r"a Python regex, case-insensitive unless --case-sensitive; \bword\b for whole words",
+    )
+    search.add_argument("--case-sensitive", action="store_true")
+    _add_filters(search)
+    search.set_defaults(func=cmd_search)
 
     show = sub.add_parser("show", help="print an issue")
     show.add_argument("id", help="an issue id, or any unique start of one")

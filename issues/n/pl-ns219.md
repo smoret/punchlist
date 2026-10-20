@@ -2,7 +2,7 @@
 id: pl-ns219
 title: Search
 type: task
-status: open
+status: closed
 priority: high
 created: 2026-10-19
 ---

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import io
+import json
 from pathlib import Path
 
 import pytest
@@ -407,3 +408,70 @@ def test_set_rejects(sample: Config, capsys: pytest.CaptureFixture[str],
 def test_set_needs_an_assignment(sample: Config) -> None:
     with pytest.raises(SystemExit):
         main(["set", "none1"])
+
+
+@pytest.fixture
+def searchable(sample: Config) -> Config:
+    """`sample`, plus issues whose bodies mention retries."""
+    write_issue(Issue({"id": "pl-body1", "title": "Network flakiness", "type": "bug",
+                       "status": "open", "priority": "medium", "created": "2026-01-01"},
+                      "Add a Retry with backoff.\nSecond line.\n"), sample)
+    write_issue(Issue({"id": "pl-body2", "title": "Old retry work", "type": "task",
+                       "status": "closed", "created": "2026-01-01"}, "Done.\n"), sample)
+    return sample
+
+
+def _search(capsys: pytest.CaptureFixture[str], *args: str) -> list[str]:
+    """Run `punch search`, assert it succeeded, and return the ids printed."""
+    assert main(["search", *args]) == 0
+    return [line.split(" ", 1)[0] for line in capsys.readouterr().out.splitlines()]
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["retry"], ["pl-body1"]),  # body match, case-insensitive; closed pl-body2 left out
+        (["retry", "--all"], ["pl-body1", "pl-body2"]),  # title match on the closed one
+        (["Retry", "--case-sensitive"], ["pl-body1"]),
+        (["retry", "--case-sensitive"], []),
+        (["^second line$"], []),  # no MULTILINE: ^ and $ anchor the whole body
+        (["back.?off|dash"], ["pl-high1", "pl-body1"]),  # sorted like list: priority first
+        (["one"], ["pl-high1"]),
+        (["closed one", "--status", "closed"], ["pl-done1"]),
+        (["retry", "--all", "--type", "task"], ["pl-body2"]),
+        (["i", "--label", "a", "--label", "b"], ["pl-low01"]),  # pl-high1 has only label a
+        (["nothing matches this"], []),
+    ],
+)
+def test_search(searchable: Config, capsys: pytest.CaptureFixture[str],
+                args: list[str], expected: list[str]) -> None:
+    assert _search(capsys, *args) == expected
+
+
+def test_search_line_format_and_json(searchable: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["search", "flakiness"]) == 0
+    assert capsys.readouterr().out == "pl-body1 open bug medium - Network flakiness\n"
+    assert main(["search", "flakiness", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == [
+        {"id": "pl-body1", "title": "Network flakiness", "type": "bug", "status": "open",
+         "priority": "medium", "created": "2026-01-01"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["(unclosed"], "invalid regex '(unclosed': missing ), unterminated subpattern"),
+        (["x", "--type", "tsak"], "type 'tsak' is not one of"),
+    ],
+)
+def test_search_rejects(searchable: Config, capsys: pytest.CaptureFixture[str],
+                        args: list[str], message: str) -> None:
+    assert main(["search", *args]) == 1
+    assert message in capsys.readouterr().err
+
+
+def test_search_fails_closed_on_bad_file(searchable: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    write_raw(searchable, "pl-bad01", "junk\n")
+    assert main(["search", "retry"]) == 1
+    assert "(run `punch check` to find corrupt files)" in capsys.readouterr().err
