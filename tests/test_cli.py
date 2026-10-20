@@ -334,3 +334,76 @@ def test_close_rejects(sample: Config, capsys: pytest.CaptureFixture[str],
     assert main(["close", *args]) == 1
     assert message in capsys.readouterr().err
     assert path.read_text(encoding="utf-8") == "junk\n"
+
+
+def _set(capsys: pytest.CaptureFixture[str], *args: str) -> str:
+    """Run `punch set`, assert it succeeded, and return its output."""
+    assert main(["set", *args]) == 0
+    return capsys.readouterr().out
+
+
+def test_set_changes_and_adds(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    path = sample.issue_path("pl-none1")
+    before: str = path.read_text(encoding="utf-8")
+    out = _set(capsys, "none1", "priority=high", "labels= x ,y", "title=  Renamed  ")
+    assert out == "updated pl-none1: priority, labels, title\n"
+    assert path.read_text(encoding="utf-8") == before.replace(
+        "title: No priority", "title: Renamed"
+    ).replace("status: open\n", "status: open\npriority: high\nlabels: x, y\n")
+    assert main(["check"]) == 0
+
+
+def test_set_removes_optional_field(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert _set(capsys, "low01", "parent=", "labels=") == "updated pl-low01: parent, labels\n"
+    issue = read_issue(sample.issue_path("pl-low01"), sample)
+    assert issue.text("parent") is None
+    assert issue.items("labels") == []
+
+
+def test_set_parent_accepts_short_id(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert _set(capsys, "high1", "parent=epic") == "updated pl-high1: parent\n"
+    assert read_issue(sample.issue_path("pl-high1"), sample).text("parent") == "pl-epic1"
+
+
+def test_set_reopens(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert _set(capsys, "done1", "status=open") == "updated pl-done1: status\n"
+    assert "pl-done1" in _list(capsys)
+
+
+def test_set_unchanged_leaves_file_alone(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    path = sample.issue_path("pl-low01")
+    before: bytes = path.read_bytes()
+    assert _set(capsys, "low01", "priority=low", "labels=a,b", "category=") == "pl-low01 unchanged\n"
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["none1", "priority"], "expected field=value, got 'priority'"),
+        (["none1", "priority=high", "priority=low"], "priority is set twice"),
+        (["none1", "colour=red"], "colour is not a field in the config"),
+        (["none1", "id=pl-zzzzz"], "id cannot be changed; it names the file"),
+        (["none1", "title="], "title is required and cannot be removed"),
+        (["none1", "priority=urgent"], "priority 'urgent' is not one of"),
+        (["none1", "category=web"], "category 'web' is not one of"),
+        (["none1", "labels=a,,b"], "empty item in labels"),
+        (["none1", "created=soon"], "not a YYYY-MM-DD date"),
+        (["none1", "title=a\nstatus: closed"], "title must be a single line"),
+        (["none1", "parent=zzz"], "no issue matches 'zzz'"),
+        (["none1", "parent=none1"], "parent loop: pl-none1 -> pl-none1"),
+        (["epic1", "parent=low01"], "parent loop: pl-epic1 -> pl-low01 -> pl-epic1"),
+        (["zzz", "priority=high"], "no issue matches 'zzz'"),
+    ],
+)
+def test_set_rejects(sample: Config, capsys: pytest.CaptureFixture[str],
+                     args: list[str], message: str) -> None:
+    before: dict[Path, bytes] = {p: p.read_bytes() for p in sample.issues_path.glob("*/*.md")}
+    assert main(["set", *args]) == 1
+    assert message in capsys.readouterr().err
+    assert {p: p.read_bytes() for p in sample.issues_path.glob("*/*.md")} == before
+
+
+def test_set_needs_an_assignment(sample: Config) -> None:
+    with pytest.raises(SystemExit):
+        main(["set", "none1"])

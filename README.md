@@ -23,6 +23,7 @@ punch list --all --label cli --json
 punch show pl-7k3qx                # or any unique start: pl-7k, 7k3
 punch show 7k3 --json             # header fields plus body
 punch close pl-7k3qx
+punch set 7k3 priority=high labels=cli,docs   # field= removes an optional field
 punch check                       # validate every issue file
 punch import-md ROADMAP.md --dry-run   # what a markdown checklist would become
 punch import-md ROADMAP.md --add-categories

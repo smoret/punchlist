@@ -26,7 +26,7 @@ This repo tracks its own work with `punch` (from `.venv`; config in `punchlist.j
 - Find work with `punch list`; read an issue with `punch show <id>`.
 - Close an issue with `punch close <id>` **in the same commit** as the work that finishes it -- that is the point of keeping issues in the repo.
 - New work found along the way becomes `punch new "Title" --type task --body "..."` rather than a TODO comment.
-- Edit an issue's body by hand with the editor; `punch check` validates it.
+- Change header fields with `punch set <id> field=value`; edit an issue's body by hand with the editor. `punch check` validates both.
 
 ## Layout
 

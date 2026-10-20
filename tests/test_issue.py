@@ -9,7 +9,7 @@ import pytest
 from punchlist.config import Config
 from punchlist.errors import PunchError
 from punchlist.issue import (
-    Issue, format_issue, parse_issue, read_issue, replace_field, write_issue,
+    Issue, edit_header, format_issue, parse_issue, read_issue, write_issue,
 )
 
 SAMPLE = """\
@@ -124,34 +124,62 @@ def test_no_categories_configured_rejects_any(config: Config) -> None:
         parse_issue(_header(*BASE, "category: tooling"), bare, PATH)
 
 
-def test_replace_field_changes_one_line(config: Config) -> None:
-    assert replace_field(SAMPLE, config, PATH, "status", "closed") == SAMPLE.replace(
+def test_edit_header_changes_one_line(config: Config) -> None:
+    assert edit_header(SAMPLE, config, PATH, {"status": "closed"}) == SAMPLE.replace(
         "status: open", "status: closed"
     )
 
 
-def test_replace_field_keeps_hand_edited_order(config: Config) -> None:
+def test_edit_header_keeps_hand_edited_order(config: Config) -> None:
     text = "---\ncreated: 2026-10-18\nstatus: open\nid: pl-aaaaa\ntitle: T\ntype: bug\n---\nbody\n"
-    assert replace_field(text, config, PATH, "status", "closed") == text.replace("open", "closed")
+    assert edit_header(text, config, PATH, {"status": "closed"}) == text.replace("open", "closed")
 
 
-def test_replace_field_ignores_body_lookalike(config: Config) -> None:
+def test_edit_header_ignores_body_lookalike(config: Config) -> None:
     text = _header(*BASE) + "\nstatus: open in the body\n"
-    result = replace_field(text, config, PATH, "status", "closed")
+    result = edit_header(text, config, PATH, {"status": "closed"})
     assert result.endswith("\nstatus: open in the body\n")
     assert "status: closed\n" in result
 
 
+def test_edit_header_inserts_in_config_order(config: Config) -> None:
+    # Config order: id title type status priority category parent labels created.
+    result = edit_header(_header(*BASE), config, PATH,
+                         {"labels": "a, b", "priority": "high", "parent": "pl-bbbbb"})
+    assert result == _header("id: pl-aaaaa", "title: T", "type: bug", "status: open",
+                             "priority: high", "parent: pl-bbbbb", "labels: a, b",
+                             "created: 2026-10-18")
+
+
+def test_edit_header_inserts_into_hand_edited_order(config: Config) -> None:
+    # After the last line whose field comes before it in config order.
+    text = _header("created: 2026-10-18", "status: open", "id: pl-aaaaa", "title: T", "type: bug")
+    assert edit_header(text, config, PATH, {"priority": "low"}) == _header(
+        "created: 2026-10-18", "status: open", "id: pl-aaaaa", "title: T", "type: bug",
+        "priority: low",
+    )
+
+
+def test_edit_header_removes(config: Config) -> None:
+    text = _header(*BASE[:4], "priority: low", "labels: a", *BASE[4:]) + "\nbody\n"
+    assert edit_header(text, config, PATH, {"priority": None, "labels": None, "parent": None}) == (
+        _header(*BASE) + "\nbody\n"
+    )
+
+
 @pytest.mark.parametrize(
-    ("name", "value", "message"),
+    ("changes", "message"),
     [
-        ("status", "done", "status 'done' is not one of"),
-        ("priority", "high", "no 'priority' field"),
+        ({"status": "done"}, "status 'done' is not one of"),
+        ({"status": None}, "missing required field.*status"),
+        ({"created": "soon"}, "not a YYYY-MM-DD date"),
+        ({"title": "x\nstatus: closed"}, "title must be a single line"),
+        ({"title": "x\rstatus: closed"}, "title must be a single line"),
     ],
 )
-def test_replace_field_rejects(config: Config, name: str, value: str, message: str) -> None:
+def test_edit_header_rejects(config: Config, changes: dict[str, str | None], message: str) -> None:
     with pytest.raises(PunchError, match=message):
-        replace_field(_header(*BASE), config, PATH, name, value)
+        edit_header(_header(*BASE), config, PATH, changes)
 
 
 def test_value_kept_verbatim(config: Config) -> None:

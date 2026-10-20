@@ -15,6 +15,25 @@ from .errors import PunchError
 from .issue import Issue, issue_files, placement_error, read_issue
 
 
+def parent_loop(config: Config, issue_id: str, parent: str) -> list[str] | None:
+    """The loop that giving `issue_id` this `parent` would close, as `[a, b, a]`; else None.
+
+    Walks up from `parent` through each ancestor's file. A dangling parent or
+    a loop elsewhere ends the walk; `punch check` reports those.
+    """
+    chain: list[str] = [issue_id]
+    node: str | None = parent
+    while node is not None and node not in chain[1:]:
+        chain.append(node)
+        if node == issue_id:
+            return chain
+        path: Path = config.issue_path(node)
+        if not path.is_file():
+            return None
+        node = read_issue(path, config).text("parent")
+    return None
+
+
 def check_issues(config: Config) -> tuple[int, list[PunchError]]:
     """The number of issue files, and every problem found in them, in file and line order."""
     paths: list[Path] = issue_files(config)

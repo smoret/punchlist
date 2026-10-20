@@ -12,14 +12,16 @@ import json
 import sys
 from pathlib import Path
 
-from .check import check_issues
-from .config import CONFIG_NAME, Config, add_categories, find_root, init_config, load_config
+from .check import check_issues, parent_loop
+from .config import (
+    CONFIG_NAME, REQUIRED_FIELDS, Config, add_categories, find_root, init_config, load_config,
+)
 from .errors import PunchError
 from .ids import new_id, resolve_id
 from .importer import ImportPlan, plan_import
 from .issue import (
     FieldValue, Issue, format_issue, load_issues, parse_issue, read_issue, read_text,
-    update_field, write_issue,
+    update_issue, write_issue,
 )
 
 # `list` filters on these scalar fields; each has a flag of the same name.
@@ -148,9 +150,69 @@ def cmd_close(args: argparse.Namespace) -> int:
     if issue.status == "closed":
         print(f"{issue.id} already closed")
         return 0
-    update_field(path, config, "status", "closed")
+    update_issue(path, config, {"status": "closed"})
     print(f"closed {issue.id}")
     return 0
+
+
+def cmd_set(args: argparse.Namespace) -> int:
+    """Set or remove header fields: `field=value`, or `field=` to remove an optional one."""
+    config: Config = _load()
+    issue_id: str = resolve_id(config, args.id)
+    path: Path = config.issue_path(issue_id)
+    issue: Issue = read_issue(path, config)
+    # Everything is validated before writing, so an error names the argument.
+    changes: dict[str, str | None] = {}
+    for assignment in args.assignments:
+        name, sep, raw = assignment.partition("=")
+        name = name.strip()
+        if not sep:
+            raise PunchError(f"expected field=value, got {assignment!r}")
+        if name in changes:
+            raise PunchError(f"{name} is set twice")
+        if name not in config.fields:
+            raise PunchError(f"{name} is not a field in the config")
+        if name == "id":
+            raise PunchError("id cannot be changed; it names the file")
+        changes[name] = _set_value(config, issue_id, name, raw.strip())
+
+    changed: list[str] = [
+        name for name, value in changes.items() if _field_text(issue, name) != value
+    ]
+    if not changed:
+        print(f"{issue_id} unchanged")
+        return 0
+    update_issue(path, config, {name: changes[name] for name in changed})
+    print(f"updated {issue_id}: {', '.join(changed)}")
+    return 0
+
+
+def _set_value(config: Config, issue_id: str, name: str, value: str) -> str | None:
+    """The header text `punch set` writes for one assignment; None removes the field."""
+    if not value:
+        if name in REQUIRED_FIELDS:
+            raise PunchError(f"{name} is required and cannot be removed")
+        return None
+    if name in config.list_fields:
+        items: list[str] = [item.strip() for item in value.split(",")]
+        if not all(items):
+            raise PunchError(f"empty item in {name}")
+        return ", ".join(items)
+    error: str | None = config.choice_error(name, value)
+    if error is not None:
+        raise PunchError(error)
+    if name == "parent":
+        value = resolve_id(config, value)
+        loop: list[str] | None = parent_loop(config, issue_id, value)
+        if loop is not None:
+            raise PunchError(f"parent loop: {' -> '.join(loop)}")
+    return value
+
+
+def _field_text(issue: Issue, name: str) -> str | None:
+    """A field as its header text (list fields joined), or None if absent."""
+    value: FieldValue | None = issue.fields.get(name)
+    return ", ".join(value) if isinstance(value, list) else value
 
 
 def cmd_check(_args: argparse.Namespace) -> int:
@@ -275,6 +337,11 @@ def build_parser() -> argparse.ArgumentParser:
     close = sub.add_parser("close", help="set an issue's status to closed")
     close.add_argument("id", help="an issue id, or any unique start of one")
     close.set_defaults(func=cmd_close)
+
+    set_ = sub.add_parser("set", help="set header fields: field=value, or field= to remove")
+    set_.add_argument("id", help="an issue id, or any unique start of one")
+    set_.add_argument("assignments", nargs="+", metavar="field=value")
+    set_.set_defaults(func=cmd_set)
 
     check = sub.add_parser("check", help="validate every issue file; exit 1 on any problem")
     check.set_defaults(func=cmd_check)

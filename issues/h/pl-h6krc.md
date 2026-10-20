@@ -2,7 +2,7 @@
 id: pl-h6krc
 title: Edit fields
 type: task
-status: open
+status: closed
 created: 2026-10-19
 ---
 

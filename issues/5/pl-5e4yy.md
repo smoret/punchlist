@@ -3,6 +3,7 @@ id: pl-5e4yy
 title: import-md dry run prints uncategorized counts as '-'
 type: bug
 status: open
+priority: low
 created: 2026-10-19
 ---
 

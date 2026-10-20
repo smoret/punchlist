@@ -173,30 +173,49 @@ def format_issue(issue: Issue, config: Config) -> str:
     return text + "\n" + issue.body if issue.body else text
 
 
-def replace_field(text: str, config: Config, path: Path, name: str, value: str) -> str:
-    """`text` with one existing header field's value replaced and every other byte kept.
+def edit_header(text: str, config: Config, path: Path, changes: dict[str, str | None]) -> str:
+    """`text` with header fields set (a string) or removed (None), every other byte kept.
 
-    Editing the line in place, rather than re-serializing, keeps a hand-edited
-    file's field order and makes the diff one line. The result is parsed, so
-    an invalid value is an error.
+    Editing lines in place, rather than re-serializing, keeps a hand-edited
+    file's field order and makes the diff only the changed lines. An existing
+    field changes on its own line; a new one goes after the last field that
+    precedes it in config order. The result is parsed, so an invalid value or
+    a removed required field is an error.
     """
     lines: list[str] = text.split("\n")
     try:
         close: int = lines.index(DELIMITER, 1)
     except ValueError:
         raise PunchError(f"header has no closing {DELIMITER!r}", path, 1) from None
-    for index in range(1, close):
-        if lines[index].partition(": ")[0] == name:
+    for name, value in changes.items():
+        if value is not None and ("\n" in value or "\r" in value):
+            raise PunchError(f"{name} must be a single line")
+        index: int | None = next(
+            (i for i in range(1, close) if lines[i].partition(": ")[0] == name), None
+        )
+        if value is None:
+            if index is not None:
+                del lines[index]
+                close -= 1
+        elif index is not None:
             lines[index] = f"{name}: {value}"
-            result: str = "\n".join(lines)
-            parse_issue(result, config, path)
-            return result
-    raise PunchError(f"no {name!r} field to replace", path)
+        else:
+            rank: int = config.fields.index(name)
+            at: int = 1
+            for i in range(1, close):
+                key: str = lines[i].partition(": ")[0]
+                if key in config.fields and config.fields.index(key) < rank:
+                    at = i + 1
+            lines.insert(at, f"{name}: {value}")
+            close += 1
+    result: str = "\n".join(lines)
+    parse_issue(result, config, path)
+    return result
 
 
-def update_field(path: Path, config: Config, name: str, value: str) -> None:
-    """Rewrite one existing header field of an issue file in place (see replace_field)."""
-    path.write_text(replace_field(read_text(path), config, path, name, value), encoding="utf-8")
+def update_issue(path: Path, config: Config, changes: dict[str, str | None]) -> None:
+    """Apply `changes` to an issue file's header in place (see edit_header)."""
+    path.write_text(edit_header(read_text(path), config, path, changes), encoding="utf-8")
 
 
 def read_text(path: Path) -> str:

@@ -3,6 +3,7 @@ id: pl-yrwpf
 title: Web UI
 type: task
 status: open
+priority: low
 created: 2026-10-19
 ---
 
