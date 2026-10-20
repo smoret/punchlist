@@ -2,7 +2,7 @@
 id: pl-8n2dh
 title: punch search --context N: show the matching lines
 type: feature
-status: open
+status: closed
 created: 2026-10-19
 ---
 

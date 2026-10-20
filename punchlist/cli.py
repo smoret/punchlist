@@ -11,6 +11,7 @@ import datetime
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from .check import check_issues, parent_loop
@@ -112,8 +113,51 @@ def cmd_search(args: argparse.Namespace) -> int:
         issue for issue in _load_all(config)
         if pattern.search(issue.title) or pattern.search(issue.body)
     ]
-    _print_issues(config, _select(config, hits, args), args.json)
+    selected: list[Issue] = _select(config, hits, args)
+    snippets: dict[str, list[Snippet]] | None = None
+    if args.context is not None:
+        snippets = {issue.id: _snippets(issue, pattern, args.context) for issue in selected}
+    _print_issues(config, selected, args.json, snippets)
     return 0
+
+
+@dataclass(frozen=True)
+class Snippet:
+    """One body line shown under a search hit: its file line number, and whether it matched."""
+
+    line: int
+    text: str
+    match: bool
+
+
+# Longer body lines are cut to a window around the match.
+MAX_SNIPPET = 160
+
+
+def _snippets(issue: Issue, pattern: re.Pattern[str], context: int) -> list[Snippet]:
+    """Every body line matching `pattern`, plus `context` lines either side, in order."""
+    lines: list[str] = issue.body.split("\n")
+    if lines and not lines[-1]:
+        lines.pop()  # the body's final newline, not a line
+    matched: set[int] = {i for i, line in enumerate(lines) if pattern.search(line)}
+    shown: set[int] = {
+        j for i in matched for j in range(max(0, i - context), min(len(lines), i + context + 1))
+    }
+    return [
+        Snippet(issue.body_line + i, _clip(lines[i], pattern), i in matched)
+        for i in sorted(shown)
+    ]
+
+
+def _clip(line: str, pattern: re.Pattern[str]) -> str:
+    """`line`, or a MAX_SNIPPET window of it around the match, with `...` where it was cut."""
+    if len(line) <= MAX_SNIPPET:
+        return line
+    found: re.Match[str] | None = pattern.search(line)
+    start: int = max(0, found.start() - MAX_SNIPPET // 3) if found else 0
+    start = min(start, len(line) - MAX_SNIPPET)
+    end: int = start + MAX_SNIPPET
+    return ("..." if start else "") + line[start:end] + ("..." if end < len(line) else "")
 
 
 def _select(config: Config, issues: list[Issue], args: argparse.Namespace) -> list[Issue]:
@@ -150,16 +194,36 @@ def _sort_key(config: Config, issue: Issue) -> tuple[int, bool, float, str, str]
     return (level, rank is None, rank or 0.0, issue.text("created") or "", issue.id)
 
 
-def _print_issues(config: Config, issues: list[Issue], as_json: bool) -> None:
-    """One line per issue (id status type priority category title), or a JSON array."""
+def _print_issues(config: Config, issues: list[Issue], as_json: bool,
+                  snippets: dict[str, list[Snippet]] | None = None) -> None:
+    """One line per issue (id status type priority category title), or a JSON array.
+
+    With `snippets`, each issue's lines follow it grep-style: `  12: match`,
+    `  13- context`, and `  --` between groups that aren't adjacent; in JSON
+    they are a `matches` array.
+    """
     if as_json:
-        print(json.dumps([_json_fields(issue, config) for issue in issues], ensure_ascii=False))
+        rows: list[dict[str, object]] = []
+        for issue in issues:
+            row: dict[str, object] = dict(_json_fields(issue, config))
+            if snippets is not None:
+                row["matches"] = [
+                    {"line": s.line, "text": s.text, "match": s.match} for s in snippets[issue.id]
+                ]
+            rows.append(row)
+        print(json.dumps(rows, ensure_ascii=False))
         return
     for issue in issues:
         columns: list[str] = [issue.id] + [
             issue.text(name) or "-" for name in ("status", "type", "priority", "category")
         ]
         print(" ".join(columns), issue.title)
+        previous: int | None = None
+        for snippet in (snippets or {}).get(issue.id, []):
+            if previous is not None and snippet.line > previous + 1:
+                print("  --")
+            print(f"  {snippet.line}{':' if snippet.match else '-'} {snippet.text}")
+            previous = snippet.line
 
 
 def cmd_show(args: argparse.Namespace) -> int:
@@ -331,6 +395,13 @@ def _read_body(args: argparse.Namespace) -> str:
     return text + "\n" if text.strip() else ""
 
 
+def _context_lines(text: str) -> int:
+    """argparse type for --context: a whole number, 0 or more."""
+    if not text.isdigit():
+        raise argparse.ArgumentTypeError(f"expected a whole number 0 or more, got {text!r}")
+    return int(text)
+
+
 def _add_filters(parser: argparse.ArgumentParser) -> None:
     """The filter and output flags `list` and `search` share; `_select` reads them."""
     statuses = parser.add_mutually_exclusive_group()
@@ -380,6 +451,10 @@ def build_parser() -> argparse.ArgumentParser:
         help=r"a Python regex, case-insensitive unless --case-sensitive; \bword\b for whole words",
     )
     search.add_argument("--case-sensitive", action="store_true")
+    search.add_argument(
+        "--context", type=_context_lines, metavar="N",
+        help="under each hit, its matching body lines with line numbers and N lines either side",
+    )
     _add_filters(search)
     search.set_defaults(func=cmd_search)
 

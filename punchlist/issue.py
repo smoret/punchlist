@@ -53,6 +53,7 @@ class Issue:
     body: str = ""
     path: Path | None = field(default=None, compare=False)
     lines: dict[str, int] = field(default_factory=dict[str, int], compare=False)
+    body_line: int = field(default=0, compare=False)  # file line of the body's first line
 
     def text(self, name: str) -> str | None:
         """A scalar field's value, or None if absent."""
@@ -121,9 +122,11 @@ def parse_issue(text: str, config: Config, path: Path) -> Issue:
         raise PunchError(f"missing required field(s): {', '.join(missing)}", path, close + 1)
 
     body: str = "\n".join(lines[close + 1:])
+    body_line: int = close + 2  # 1-based: the line after the closing ---
     if body.startswith("\n"):
         body = body[1:]
-    return Issue(fields, body, path, linenos)
+        body_line += 1
+    return Issue(fields, body, path, linenos, body_line)
 
 
 def _parse_line(line: str, config: Config, path: Path, lineno: int) -> tuple[str, FieldValue]:

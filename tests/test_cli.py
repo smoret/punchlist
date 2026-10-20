@@ -520,3 +520,103 @@ def test_search_fails_closed_on_bad_file(searchable: Config, capsys: pytest.Capt
     write_raw(searchable, "pl-bad01", "junk\n")
     assert main(["search", "retry"]) == 1
     assert "(run `punch check` to find corrupt files)" in capsys.readouterr().err
+
+
+CONTEXT_BODY = "".join(f"line {n}\n" for n in range(1, 11)).replace("line 3", "needle three").replace(
+    "line 8", "needle eight"
+)
+
+
+@pytest.fixture
+def long_body(in_root: Path, config: Config) -> Config:
+    """pl-ctx01: ten body lines (file lines 9-18), `needle` on body lines 3 and 8."""
+    write_issue(Issue({"id": "pl-ctx01", "title": "Context", "type": "task", "status": "open",
+                       "created": "2026-01-01"}, CONTEXT_BODY), config)
+    return config
+
+
+def _search_out(capsys: pytest.CaptureFixture[str], *args: str) -> str:
+    assert main(["search", *args]) == 0
+    return capsys.readouterr().out
+
+
+def test_context_zero_shows_matching_lines(long_body: Config,
+                                           capsys: pytest.CaptureFixture[str]) -> None:
+    # Two --- lines and five fields, then the blank separator: body line 1 is file line 9.
+    assert _search_out(capsys, "needle", "--context", "0") == (
+        "pl-ctx01 open task - - Context\n"
+        "  11: needle three\n"
+        "  --\n"
+        "  16: needle eight\n"
+    )
+
+
+def test_context_lines_either_side(long_body: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert _search_out(capsys, "needle", "--context", "1") == (
+        "pl-ctx01 open task - - Context\n"
+        "  10- line 2\n"
+        "  11: needle three\n"
+        "  12- line 4\n"
+        "  --\n"
+        "  15- line 7\n"
+        "  16: needle eight\n"
+        "  17- line 9\n"
+    )
+
+
+def test_context_groups_merge_when_they_touch(long_body: Config,
+                                              capsys: pytest.CaptureFixture[str]) -> None:
+    out = _search_out(capsys, "needle", "--context", "2")
+    assert "--\n" not in out  # 3+2 and 8-2 meet at body line 5/6, so one group
+    assert out.splitlines()[1:] == [f"  {n}{':' if n in (11, 16) else '-'} " + text
+                                    for n, text in zip(range(9, 19), CONTEXT_BODY.splitlines())]
+
+
+def test_context_clamps_at_body_edges(long_body: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    out = _search_out(capsys, "line 1$|line 10", "--context", "5")
+    assert out.splitlines()[1] == "  9: line 1"
+    assert out.splitlines()[-1] == "  18: line 10"
+
+
+def test_context_title_only_match_has_no_lines(long_body: Config,
+                                               capsys: pytest.CaptureFixture[str]) -> None:
+    assert _search_out(capsys, "context", "--context", "3") == "pl-ctx01 open task - - Context\n"
+
+
+def test_context_body_line_without_blank_separator(in_root: Path, config: Config,
+                                                   capsys: pytest.CaptureFixture[str]) -> None:
+    write_raw(config, "pl-hand1",
+              "---\nid: pl-hand1\ntitle: T\ntype: bug\nstatus: open\ncreated: 2026-01-01\n---\n"
+              "needle on file line 8\n")
+    assert _search_out(capsys, "needle", "--context", "0").splitlines()[1] == (
+        "  8: needle on file line 8"
+    )
+
+
+def test_context_clips_long_lines(in_root: Path, config: Config,
+                                  capsys: pytest.CaptureFixture[str]) -> None:
+    line = "a" * 200 + " needle " + "b" * 200
+    write_issue(Issue({"id": "pl-long1", "title": "T", "type": "bug", "status": "open",
+                       "created": "2026-01-01"}, line + "\n"), config)
+    shown = _search_out(capsys, "needle", "--context", "0").splitlines()[1]
+    text = shown.split(": ", 1)[1]
+    assert text.startswith("...") and text.endswith("...")
+    assert " needle " in text
+    assert len(text) == 160 + 6
+
+
+def test_context_json(long_body: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    rows = json.loads(_search_out(capsys, "three", "--context", "1", "--json"))
+    assert rows[0]["matches"] == [
+        {"line": 10, "text": "line 2", "match": False},
+        {"line": 11, "text": "needle three", "match": True},
+        {"line": 12, "text": "line 4", "match": False},
+    ]
+    assert "matches" not in json.loads(_search_out(capsys, "three", "--json"))[0]
+
+
+@pytest.mark.parametrize("value", ["-1", "two", "1.5"])
+def test_context_rejects(long_body: Config, capsys: pytest.CaptureFixture[str], value: str) -> None:
+    with pytest.raises(SystemExit):
+        main(["search", "needle", "--context", value])
+    assert "expected a whole number 0 or more" in capsys.readouterr().err
