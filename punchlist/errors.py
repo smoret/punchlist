@@ -21,9 +21,14 @@ class PunchError(Exception):
         """`path:line: message`, with the path relative to `base` when it lies under it."""
         if self.path is None:
             return self.message
-        shown: Path = self.path
-        if base is not None and shown.is_relative_to(base):
-            shown = shown.relative_to(base)
+        shown: str = display_path(self.path, base)
         if self.line is None:
-            return f"{shown.as_posix()}: {self.message}"
-        return f"{shown.as_posix()}:{self.line}: {self.message}"
+            return f"{shown}: {self.message}"
+        return f"{shown}:{self.line}: {self.message}"
+
+
+def display_path(path: Path, base: Path | None = None) -> str:
+    """`path` in forward slashes, relative to `base` when it lies under it."""
+    if base is not None and path.is_relative_to(base):
+        path = path.relative_to(base)
+    return path.as_posix()

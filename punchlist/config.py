@@ -79,6 +79,10 @@ class Config:
             )
         return self.issues_path / random[:self.fanout] / f"{issue_id}.md"
 
+    def comments_path(self, issue_id: str) -> Path:
+        """The directory holding an issue's comments, beside its file in its bucket."""
+        return self.issue_path(issue_id).with_suffix("") / "comments"
+
     def allowed(self, field: str) -> tuple[str, ...] | None:
         """The allowed values of an enumerated field, or None if `field` is free text."""
         key: str | None = ENUM_FIELDS.get(field)

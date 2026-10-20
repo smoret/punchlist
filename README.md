@@ -26,6 +26,9 @@ punch search retry --context 1    # plus each hit's matching lines (file line nu
 punch show pl-7k3qx                # or any unique start: pl-7k, 7k3
 punch show 7k3 --json             # header fields plus body
 punch close pl-7k3qx
+punch close 7k3 --comment "Fixed by the retry change." --author claude
+punch comment 7k3 --author claude --body "Tried X; blocked on Y."   # author: flag, $PUNCH_AUTHOR, git
+punch show 7k3 --comments         # the issue, then its comments oldest first
 punch set 7k3 priority=high labels=cli,docs   # field= removes an optional field
 punch check                       # validate every issue file
 punch check --references          # also flag ids mentioned in bodies that don't exist

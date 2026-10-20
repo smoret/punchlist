@@ -29,8 +29,8 @@ The deciding requirement: **issue changes are files in the project's own git rep
   issues/                   # configurable via "issues_dir"
     7/                      # bucket: the first `fanout` characters after the prefix
       pl-7k3qx.md           # one file per issue, named by id only
-      pl-7k3qx/comments/    # planned: one file per comment, in the issue's bucket
-        20261018T1412-claude.md
+      pl-7k3qx/comments/    # one file per comment, beside the issue in its bucket
+        20261019T141205Z-claude.md
 ```
 
 - The root is found by walking up from the working directory to the nearest `punchlist.json`, the way git finds `.git`.
@@ -117,6 +117,27 @@ Everything enumerable is config, so new categories, types, or priorities need no
 ## Hierarchy
 
 Epics and subtasks are expressed with `parent: <id>`. `subtask` exists as a type, but nothing requires a subtask to have a parent or forbids a task from having one -- the link carries the structure.
+
+## Comments
+
+`punch comment <id> --body "..."` adds a comment as its own file, `issues/<bucket>/<id>/comments/<time>-<author>.md`, so two people commenting at once never touch the same file and a comment is never a merge conflict.
+
+```markdown
+---
+author: claude
+created: 2026-10-19T14:12:05Z
+---
+
+Tried X; blocked on Y.
+```
+
+- Same header format as issues, but a fixed schema: `author` and `created`, both required, nothing else. Config `fields` don't apply; a comment isn't an issue.
+- `created` is UTC to the second, so order is right across machines and time zones. The filename is that time, compact (`20261019T141205Z`), then a slug of the author (`Steve Moret` -> `steve-moret`), so filenames sort by time. The same author twice in one second gets `-2`, `-3`, ...; files are created exclusively and never overwritten.
+- **Author:** `--author`, else `$PUNCH_AUTHOR`, else git's `user.name`, else an error. Agents run under a human's git identity, so an agent should pass `--author` or set `PUNCH_AUTHOR`, or its comments are signed as that human.
+- `punch show <id> --comments` prints them after the issue, oldest first; `--json` adds `comments: [{author, created, body}]`. Plain `show` stays exactly the issue file.
+- `check` requires every folder beside an issue file to belong to an existing issue in that bucket, and every entry of a `comments/` folder to be a comment whose header parses and matches its filename.
+- `punch close <id> --comment "why"` closes with a reason in one step. The comment is written first, so a failure never leaves an issue closed without its reason; closing an already-closed issue adds nothing, so a retried close doesn't repeat the comment.
+- Editing or deleting a comment is a plain file edit.
 
 ## Importing a markdown roadmap
 

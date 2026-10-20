@@ -97,8 +97,18 @@ class Issue:
         return value
 
 
-def parse_issue(text: str, config: Config, path: Path) -> Issue:
-    """Parse an issue file's contents. `path` locates errors and is kept on the issue."""
+@dataclass(frozen=True)
+class Header:
+    """A file split at its front-matter delimiters, before any field is interpreted."""
+
+    lines: list[tuple[int, str]]  # (1-based line number, raw text) between the delimiters
+    close_line: int  # 1-based line number of the closing ---
+    body: str
+    body_line: int  # 1-based line number of the body's first line
+
+
+def split_header(text: str, path: Path) -> Header:
+    """Split a file in the shared header format (issues and comments) into header and body."""
     lines: list[str] = text.split("\n")
     if lines[0] != DELIMITER:
         raise PunchError(f"first line must be {DELIMITER!r}", path, 1)
@@ -106,12 +116,21 @@ def parse_issue(text: str, config: Config, path: Path) -> Issue:
         close: int = lines.index(DELIMITER, 1)
     except ValueError:
         raise PunchError(f"header has no closing {DELIMITER!r}", path, 1) from None
+    body: str = "\n".join(lines[close + 1:])
+    body_line: int = close + 2  # the line after the closing ---
+    if body.startswith("\n"):
+        body = body[1:]
+        body_line += 1
+    return Header([(i + 1, lines[i]) for i in range(1, close)], close + 1, body, body_line)
 
+
+def parse_issue(text: str, config: Config, path: Path) -> Issue:
+    """Parse an issue file's contents. `path` locates errors and is kept on the issue."""
+    header: Header = split_header(text, path)
     fields: dict[str, FieldValue] = {}
     linenos: dict[str, int] = {}
-    for index in range(1, close):
-        lineno: int = index + 1
-        name, value = _parse_line(lines[index], config, path, lineno)
+    for lineno, line in header.lines:
+        name, value = _parse_line(line, config, path, lineno)
         if name in fields:
             raise PunchError(f"duplicate field {name!r}", path, lineno)
         fields[name] = value
@@ -119,14 +138,10 @@ def parse_issue(text: str, config: Config, path: Path) -> Issue:
 
     missing: list[str] = [f for f in REQUIRED_FIELDS if f not in fields]
     if missing:
-        raise PunchError(f"missing required field(s): {', '.join(missing)}", path, close + 1)
-
-    body: str = "\n".join(lines[close + 1:])
-    body_line: int = close + 2  # 1-based: the line after the closing ---
-    if body.startswith("\n"):
-        body = body[1:]
-        body_line += 1
-    return Issue(fields, body, path, linenos, body_line)
+        raise PunchError(
+            f"missing required field(s): {', '.join(missing)}", path, header.close_line
+        )
+    return Issue(fields, header.body, path, linenos, header.body_line)
 
 
 def _parse_line(line: str, config: Config, path: Path, lineno: int) -> tuple[str, FieldValue]:

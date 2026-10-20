@@ -6,6 +6,8 @@ filename, which with correct buckets also makes ids unique; each `parent`
 names an existing issue file; and no chain of parents loops back on itself.
 Opt-in (config `check_references`, or `punch check --references`): each id
 of this tracker's shape mentioned in a body names an existing issue file.
+Comments: every folder beside an issue file belongs to an existing issue, and
+every file in a `comments/` folder is a valid comment matching its name.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .comment import read_comment
 from .config import Config
 from .errors import PunchError
 from .ids import ALPHABET
@@ -75,8 +78,45 @@ def check_issues(config: Config,
         if references:
             problems.extend(_dangling_references(config, issue, stems))
     problems.extend(_parent_loops(parsed))
+    problems.extend(_comment_problems(config))
     problems.sort(key=lambda p: (p.path or Path(), p.line or 0))
     return len(paths), problems
+
+
+def _comment_problems(config: Config) -> list[PunchError]:
+    """Problems with comment folders and files.
+
+    A folder beside an issue file (`issues/<bucket>/<id>/`) must belong to an
+    existing, correctly placed issue; every entry of its `comments/` folder
+    must be a comment file whose header parses and matches its name.
+    """
+    problems: list[PunchError] = []
+    if not config.issues_path.is_dir():
+        return problems
+    for folder in sorted(config.issues_path.glob("*/*/")):
+        try:
+            expected: Path = config.issue_path(folder.name).with_suffix("")
+        except PunchError:
+            expected = Path()
+        if folder != expected or not (folder.parent / f"{folder.name}.md").is_file():
+            problems.append(PunchError(
+                f"folder for issue {folder.name!r}, which does not exist here", folder
+            ))
+            continue
+        comments: Path = folder / "comments"
+        if not comments.is_dir():
+            continue
+        for path in sorted(comments.iterdir()):
+            if not path.is_file() or path.suffix != ".md":
+                problems.append(PunchError(
+                    "not a comment file (expected <time>-<author>.md)", path
+                ))
+                continue
+            try:
+                read_comment(path)
+            except PunchError as exc:
+                problems.append(exc)
+    return problems
 
 
 def _dangling_references(config: Config, issue: Issue, stems: set[str]) -> list[PunchError]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 from pathlib import Path
 
 import pytest
@@ -9,10 +10,13 @@ from helpers import write_raw
 
 from punchlist.check import check_issues
 from punchlist.cli import main
+from punchlist.comment import write_comment
 from punchlist.config import Config
 from punchlist.issue import Issue, write_issue
 
-HEADER = "---\nid: {id}\ntitle: T\ntype: bug\nstatus: open\n{extra}created: 2026-01-01\n---\n"
+WHEN = datetime.datetime(2026, 10, 19, 14, 12, 5, tzinfo=datetime.timezone.utc)
+
+HEADER ="---\nid: {id}\ntitle: T\ntype: bug\nstatus: open\n{extra}created: 2026-01-01\n---\n"
 
 
 def _good(config: Config, stem: str, extra: str = "") -> None:
@@ -141,10 +145,10 @@ def test_invalid_utf8_names_line(config: Config) -> None:
 
 
 def test_ignores_non_issue_files(config: Config) -> None:
+    # Only .md files directly in the issues directory or a bucket are issue files.
     _good(config, "pl-ok001")
     (config.issues_path / "notes.txt").write_text("junk", encoding="utf-8")
-    (config.issues_path / "o" / "pl-ok001" / "comments").mkdir(parents=True)
-    (config.issues_path / "o" / "pl-ok001" / "comments" / "c.md").write_text("x", encoding="utf-8")
+    write_comment(config, "pl-ok001", "claude", "A comment.\n", WHEN)
     assert check_issues(config) == (1, [])
 
 

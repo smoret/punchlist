@@ -9,16 +9,19 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from .check import check_issues, parent_loop
+from .comment import Comment, load_comments, write_comment
 from .config import (
     CONFIG_NAME, REQUIRED_FIELDS, Config, add_categories, find_root, init_config, load_config,
 )
-from .errors import PunchError
+from .errors import PunchError, display_path
 from .ids import new_id, resolve_id
 from .importer import ImportPlan, plan_import
 from .issue import (
@@ -227,26 +230,85 @@ def _print_issues(config: Config, issues: list[Issue], as_json: bool,
 
 
 def cmd_show(args: argparse.Namespace) -> int:
-    """Print one issue's file, or with --json its fields plus `body`."""
+    """Print one issue's file, or with --json its fields plus `body`; --comments adds those."""
     config: Config = _load()
-    path: Path = config.issue_path(resolve_id(config, args.id))
+    issue_id: str = resolve_id(config, args.id)
+    path: Path = config.issue_path(issue_id)
     text: str = read_text(path)
     issue: Issue = parse_issue(text, config, path)
+    comments: list[Comment] = load_comments(config, issue_id) if args.comments else []
     if args.json:
-        print(json.dumps({**_json_fields(issue, config), "body": issue.body}, ensure_ascii=False))
-    else:
-        sys.stdout.write(text)
+        row: dict[str, object] = {**_json_fields(issue, config), "body": issue.body}
+        if args.comments:
+            row["comments"] = [
+                {"author": c.author, "created": c.created, "body": c.body} for c in comments
+            ]
+        print(json.dumps(row, ensure_ascii=False))
+        return 0
+    sys.stdout.write(text)
+    if comments:
+        sys.stdout.write("\n## Comments\n")
+        for comment in comments:
+            sys.stdout.write(f"\n### {comment.author}, {comment.created}\n\n{comment.body}")
     return 0
 
 
+def cmd_comment(args: argparse.Namespace) -> int:
+    """Add a comment to an issue and print the new file's path."""
+    config: Config = _load()
+    issue_id: str = resolve_id(config, args.id)
+    read_issue(config.issue_path(issue_id), config)  # refuse to comment on a corrupt issue
+    author: str = _author(args.author, config.root)
+    body: str = _read_body(args)
+    if not body:
+        raise PunchError("comment body is empty; pass --body or --body-file")
+    path: Path = write_comment(config, issue_id, author, body,
+                               datetime.datetime.now(datetime.timezone.utc))
+    print(display_path(path, Path.cwd().resolve()))
+    return 0
+
+
+def _author(flag: str | None, root: Path) -> str:
+    """--author, else $PUNCH_AUTHOR, else git's user.name; an error if none is set."""
+    author: str = (flag or os.environ.get("PUNCH_AUTHOR") or git_user(root) or "").strip()
+    if not author:
+        raise PunchError("no author: pass --author, set PUNCH_AUTHOR, or set git's user.name")
+    if "\n" in author or "\r" in author:
+        raise PunchError("author must be a single line")
+    return author
+
+
+def git_user(root: Path) -> str | None:
+    """git config user.name as seen from `root`, or None if git or the setting is missing."""
+    try:
+        result = subprocess.run(["git", "config", "user.name"], cwd=root, capture_output=True,
+                                text=True, encoding="utf-8", check=False)
+    except OSError:
+        return None
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+
 def cmd_close(args: argparse.Namespace) -> int:
-    """Set an issue's status to closed, changing only that line."""
+    """Set an issue's status to closed, changing only that line; --comment says why."""
+    if args.author is not None and args.comment is None:
+        raise PunchError("--author only applies with --comment")
     config: Config = _load()
     path: Path = config.issue_path(resolve_id(config, args.id))
     issue: Issue = read_issue(path, config)
     if issue.status == "closed":
-        print(f"{issue.id} already closed")
+        # Idempotent: a retried close must not add the same comment twice.
+        print(f"{issue.id} already closed" + ("; comment not added" if args.comment else ""))
         return 0
+    if args.comment is not None:
+        body: str = args.comment.strip("\n")
+        if not body.strip():
+            raise PunchError("--comment is empty")
+        # Comment first: if it fails, the issue is not left closed without its reason.
+        comment_path: Path = write_comment(
+            config, issue.id, _author(args.author, config.root), body + "\n",
+            datetime.datetime.now(datetime.timezone.utc),
+        )
+        print(display_path(comment_path, Path.cwd().resolve()))
     update_issue(path, config, {"status": "closed"})
     print(f"closed {issue.id}")
     return 0
@@ -461,10 +523,24 @@ def build_parser() -> argparse.ArgumentParser:
     show = sub.add_parser("show", help="print an issue")
     show.add_argument("id", help="an issue id, or any unique start of one")
     show.add_argument("--json", action="store_true", help="header fields plus body as JSON")
+    show.add_argument("--comments", action="store_true",
+                      help="also print its comments, oldest first")
     show.set_defaults(func=cmd_show)
+
+    comment = sub.add_parser("comment", help="add a comment to an issue; prints its path")
+    comment.add_argument("id", help="an issue id, or any unique start of one")
+    comment.add_argument("--author",
+                         help="who is commenting (default: $PUNCH_AUTHOR, then git's user.name)")
+    comment_body = comment.add_mutually_exclusive_group()
+    comment_body.add_argument("--body", help="comment text")
+    comment_body.add_argument("--body-file", help="read the comment from a file, or `-` for stdin")
+    comment.set_defaults(func=cmd_comment)
 
     close = sub.add_parser("close", help="set an issue's status to closed")
     close.add_argument("id", help="an issue id, or any unique start of one")
+    close.add_argument("--comment", help="also add this comment, e.g. why it was closed")
+    close.add_argument("--author",
+                       help="the comment's author (default: $PUNCH_AUTHOR, then git's user.name)")
     close.set_defaults(func=cmd_close)
 
     set_ = sub.add_parser("set", help="set header fields: field=value, or field= to remove")

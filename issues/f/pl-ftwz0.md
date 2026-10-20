@@ -2,7 +2,7 @@
 id: pl-ftwz0
 title: Comments
 type: task
-status: open
+status: closed
 priority: high
 created: 2026-10-19
 ---
