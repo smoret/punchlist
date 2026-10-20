@@ -83,6 +83,7 @@ Fields are written in config order, so diffs stay minimal and a file punchlist w
 - Lowercase Crockford base32 (`0-9a-z` minus `i`, `l`, `o`, `u`), drawn with `secrets`.
 - `new` redraws if the file already exists, so a collision within one checkout is impossible. The remaining risk is two unmerged branches minting the same id: at 5 chars (about 33M ids) that's roughly 0.0006% for 20 concurrent creations, and it surfaces loudly as a git add/add conflict.
 - `check` validates that every file is in its bucket, every header parses, each `id:` matches its filename (which, with buckets enforced, makes ids unique), every `parent` exists, and no chain of parents loops. It reports every problem, one `path:line: message` per line, and exits 1 if there are any. Projects can run it as a test.
+- An opt-in **reference check** also flags ids mentioned in bodies ("blocked on pl-7k3qx") that name no issue. Only this tracker's own id shape counts -- `<prefix>-` plus `id_length` id-alphabet characters, on word boundaries -- so another tracker's ids are never flagged; a closed issue still exists. It is opt-in because a dangling mention is a policy question, not a malformed file: a body may quote an example id. Turn it on per tracker with `"check_references": true`, or for one run with `punch check --references`.
 
 ## Config (`punchlist.json`)
 
@@ -99,11 +100,12 @@ Everything enumerable is config, so new categories, types, or priorities need no
   "types": ["epic", "feature", "task", "bug", "subtask"],
   "statuses": ["open", "closed"],
   "priorities": ["high", "medium", "low"],
-  "categories": []
+  "categories": [],
+  "check_references": false
 }
 ```
 
-- Every key is required and unknown keys are errors.
+- Every key is **known**: an unknown key (a typo, say) or a wrongly typed value is an error. Keys that existed from the start are required. Keys added later (`check_references`) are optional and take a documented default when absent, because a new required key would stop every existing tracker from loading the moment punchlist updates. `init` writes them all, so they're discoverable.
 - `fanout` is the bucket width, from 1 to `id_length`: 1 gives 32 buckets, 2 gives 1,024. Choose it before the first issue; see Storage layout.
 - `fields` sets the allowed header fields and their write order. It must include the required five; extra custom fields are allowed.
 - The enumerated fields are `type`, `status`, `priority`, and `category`, validated against `types`, `statuses`, `priorities`, and `categories`. None of them may be a list field.

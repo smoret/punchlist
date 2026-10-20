@@ -181,3 +181,63 @@ def test_cli_paths_relative_to_cwd(root: Path, config: Config, monkeypatch: pyte
     write_raw(config, "pl-bad01", "junk\n")
     assert main(["check"]) == 1
     assert capsys.readouterr().out == "issues/b/pl-bad01.md:1: first line must be '---'\n"
+
+
+def _with_body(config: Config, stem: str, body: str, status: str = "open") -> None:
+    write_raw(config, stem, HEADER.format(id=stem, extra="").replace("status: open",
+                                                                       f"status: {status}")
+              + "\n" + body)
+
+
+REFERENCES = (
+    "Blocked on pl-aaaaa and pl-zzzzz.\n"           # line 9: aaaaa exists, zzzzz dangles
+    "Again pl-zzzzz, pl-zzzzz (once per line).\n"    # line 10
+    "Other trackers: ab-zzzzz, xpl-zzzzz, pl-zzzzzz, pl-zzzz.\n"  # 11: none match the shape
+    "Not in the alphabet: pl-iiiii, pl-ooooo.\n"     # line 12
+    "Closed is fine: pl-ccccc. Trailing: (pl-yyyyy)\n"  # line 13: yyyyy dangles
+)
+
+
+@pytest.fixture
+def referencing(config: Config) -> Config:
+    _good(config, "pl-aaaaa")
+    _with_body(config, "pl-ccccc", "", status="closed")
+    _with_body(config, "pl-bbbbb", REFERENCES)
+    return config
+
+
+def test_references_off_by_default(referencing: Config) -> None:
+    assert check_issues(referencing) == (3, [])
+
+
+def test_references_reported_with_lines(referencing: Config) -> None:
+    _count, problems = check_issues(referencing, references=True)
+    assert [p.describe(referencing.root) for p in problems] == [
+        "issues/b/pl-bbbbb.md:9: reference to pl-zzzzz, which does not exist",
+        "issues/b/pl-bbbbb.md:10: reference to pl-zzzzz, which does not exist",
+        "issues/b/pl-bbbbb.md:13: reference to pl-yyyyy, which does not exist",
+    ]
+
+
+def test_references_from_config(referencing: Config) -> None:
+    on = Config(**{**referencing.__dict__, "check_references": True})
+    assert len(check_issues(on)[1]) == 3
+    assert check_issues(on, references=False) == (3, [])
+
+
+def test_references_skip_the_header(config: Config) -> None:
+    # parent: is checked by its own rule; the reference check reads bodies only.
+    _good(config, "pl-aaaaa", "parent: pl-zzzzz\n")
+    assert _lines(config) == ["issues/a/pl-aaaaa.md:6: parent 'pl-zzzzz' does not exist"]
+    assert len(check_issues(config, references=True)[1]) == 1
+
+
+def test_cli_references_flag(root: Path, referencing: Config, monkeypatch: pytest.MonkeyPatch,
+                             capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.chdir(root)
+    assert main(["check"]) == 0
+    assert capsys.readouterr().out == "3 issues ok\n"
+    assert main(["check", "--references"]) == 1
+    assert capsys.readouterr().out.splitlines()[0] == (
+        "issues/b/pl-bbbbb.md:9: reference to pl-zzzzz, which does not exist"
+    )

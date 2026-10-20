@@ -314,10 +314,10 @@ def _field_text(issue: Issue, name: str) -> str | None:
     return ", ".join(value) if isinstance(value, list) else value
 
 
-def cmd_check(_args: argparse.Namespace) -> int:
+def cmd_check(args: argparse.Namespace) -> int:
     """Print every problem in every issue file, one per line; exit 1 if there are any."""
     config: Config = _load()
-    count, problems = check_issues(config)
+    count, problems = check_issues(config, references=True if args.references else None)
     for problem in problems:
         print(problem.describe(Path.cwd().resolve()))
     if problems:
@@ -473,6 +473,11 @@ def build_parser() -> argparse.ArgumentParser:
     set_.set_defaults(func=cmd_set)
 
     check = sub.add_parser("check", help="validate every issue file; exit 1 on any problem")
+    check.add_argument(
+        "--references", action="store_true",
+        help="also flag body mentions of ids that don't exist (on by default if the config "
+             "sets check_references)",
+    )
     check.set_defaults(func=cmd_check)
 
     imp = sub.add_parser("import-md", help="import a markdown roadmap's checklist as issues")

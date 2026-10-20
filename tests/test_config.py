@@ -101,6 +101,29 @@ def test_rejects_missing_key() -> None:
         parse_config(data, Path("."), Path(CONFIG_NAME))
 
 
+def test_optional_key_may_be_absent() -> None:
+    # A punchlist.json written before check_references existed still loads.
+    data: dict[str, Any] = default_config("pl")
+    del data["check_references"]
+    assert parse_config(data, Path("."), Path(CONFIG_NAME)).check_references is False
+
+
+def test_init_writes_optional_keys() -> None:
+    assert default_config("pl")["check_references"] is False
+    assert _parse(check_references=True).check_references is True
+
+
+@pytest.mark.parametrize("value", ["yes", 1, None])
+def test_optional_key_type_is_checked(value: Any) -> None:
+    with pytest.raises(PunchError, match="check_references must be true or false"):
+        _parse(check_references=value)
+
+
+def test_misspelled_optional_key_is_unknown() -> None:
+    with pytest.raises(PunchError, match="unknown key.*check_refrences"):
+        _parse(check_refrences=True)
+
+
 def test_default_config_is_json_round_trippable() -> None:
     data = default_config("pl")
     assert json.loads(json.dumps(data)) == data

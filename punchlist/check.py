@@ -4,14 +4,18 @@ Per file it reports a file outside its bucket and the first parse error (the
 parser stops there), then checks across files: each `id:` matches its
 filename, which with correct buckets also makes ids unique; each `parent`
 names an existing issue file; and no chain of parents loops back on itself.
+Opt-in (config `check_references`, or `punch check --references`): each id
+of this tracker's shape mentioned in a body names an existing issue file.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from .config import Config
 from .errors import PunchError
+from .ids import ALPHABET
 from .issue import Issue, issue_files, placement_error, read_issue
 
 
@@ -34,8 +38,15 @@ def parent_loop(config: Config, issue_id: str, parent: str) -> list[str] | None:
     return None
 
 
-def check_issues(config: Config) -> tuple[int, list[PunchError]]:
-    """The number of issue files, and every problem found in them, in file and line order."""
+def check_issues(config: Config,
+                 references: bool | None = None) -> tuple[int, list[PunchError]]:
+    """The number of issue files, and every problem found in them, in file and line order.
+
+    `references` turns the body reference check on or off; None follows the
+    config's `check_references`.
+    """
+    if references is None:
+        references = config.check_references
     paths: list[Path] = issue_files(config)
     # Parents are checked against filenames, so a corrupt parent file is one
     # problem rather than one per child.
@@ -61,9 +72,31 @@ def check_issues(config: Config) -> tuple[int, list[PunchError]]:
             problems.append(PunchError(
                 f"parent {parent!r} does not exist", path, issue.lines["parent"]
             ))
+        if references:
+            problems.extend(_dangling_references(config, issue, stems))
     problems.extend(_parent_loops(parsed))
     problems.sort(key=lambda p: (p.path or Path(), p.line or 0))
     return len(paths), problems
+
+
+def _dangling_references(config: Config, issue: Issue, stems: set[str]) -> list[PunchError]:
+    """Each body mention of this tracker's id shape that names no issue file, once per line.
+
+    Only `<prefix>-` plus `id_length` id-alphabet characters, on word
+    boundaries, counts, so another tracker's ids (another prefix) never match.
+    """
+    pattern: re.Pattern[str] = re.compile(
+        rf"\b{re.escape(config.prefix)}-[{ALPHABET}]{{{config.id_length}}}\b"
+    )
+    problems: list[PunchError] = []
+    for offset, line in enumerate(issue.body.split("\n")):
+        for mention in dict.fromkeys(pattern.findall(line)):
+            if mention not in stems:
+                problems.append(PunchError(
+                    f"reference to {mention}, which does not exist",
+                    issue.path, issue.body_line + offset,
+                ))
+    return problems
 
 
 def _parent_loops(issues: dict[str, Issue]) -> list[PunchError]:

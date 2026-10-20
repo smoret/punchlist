@@ -4,7 +4,9 @@ The config's presence marks the root, found by walking up from the working
 directory the way git finds `.git`. Everything enumerable (types, statuses,
 priorities, categories, the field list) lives here, so changing them needs no
 code change. Validation fails closed: an unknown key or a wrongly typed value
-is an error, not a default.
+is an error, not a default. Keys added after trackers already existed are
+optional (`OPTIONAL_KEYS`), so an older punchlist.json keeps loading; every
+other key is required.
 """
 
 from __future__ import annotations
@@ -29,6 +31,13 @@ ENUM_FIELDS: dict[str, str] = {
     "category": "categories",
 }
 
+# Keys an older punchlist.json may lack, and the value each then takes. A new
+# key goes here rather than being required, or every existing tracker would
+# stop loading the moment punchlist updates.
+OPTIONAL_KEYS: dict[str, Any] = {
+    "check_references": False,
+}
+
 PREFIX_RE = re.compile(r"[a-z0-9]+")
 FIELD_RE = re.compile(r"[a-z][a-z0-9_-]*")
 
@@ -48,6 +57,7 @@ class Config:
     statuses: tuple[str, ...]
     priorities: tuple[str, ...]  # highest first
     categories: tuple[str, ...]
+    check_references: bool = False  # `check` also flags body mentions of missing ids
 
     @property
     def issues_path(self) -> Path:
@@ -99,6 +109,7 @@ def default_config(prefix: str) -> dict[str, Any]:
         "statuses": ["open", "closed"],
         "priorities": ["high", "medium", "low"],
         "categories": [],
+        **OPTIONAL_KEYS,
     }
 
 
@@ -155,9 +166,13 @@ def parse_config(data: Any, root: Path, path: Path) -> Config:
     unknown: list[str] = sorted(set(data) - expected)
     if unknown:
         raise PunchError(f"unknown key(s): {', '.join(unknown)}", path)
-    missing: list[str] = sorted(expected - set(data))
+    missing: list[str] = sorted(expected - set(data) - set(OPTIONAL_KEYS))
     if missing:
         raise PunchError(f"missing key(s): {', '.join(missing)}", path)
+    data = {**OPTIONAL_KEYS, **data}
+    check_references: Any = data["check_references"]
+    if not isinstance(check_references, bool):
+        raise PunchError("check_references must be true or false", path)
 
     prefix: str = _string(data, "prefix", path)
     if not PREFIX_RE.fullmatch(prefix):
@@ -204,6 +219,7 @@ def parse_config(data: Any, root: Path, path: Path) -> Config:
         statuses=enums["statuses"],
         priorities=enums["priorities"],
         categories=enums["categories"],
+        check_references=check_references,
     )
 
 

@@ -28,6 +28,7 @@ punch show 7k3 --json             # header fields plus body
 punch close pl-7k3qx
 punch set 7k3 priority=high labels=cli,docs   # field= removes an optional field
 punch check                       # validate every issue file
+punch check --references          # also flag ids mentioned in bodies that don't exist
 punch import-md ROADMAP.md --dry-run   # what a markdown checklist would become
 punch import-md ROADMAP.md --add-categories
 ```
