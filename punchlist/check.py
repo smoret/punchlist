@@ -4,6 +4,8 @@ Per file it reports a file outside its bucket and the first parse error (the
 parser stops there), then checks across files: each `id:` matches its
 filename, which with correct buckets also makes ids unique; each `parent`
 names an existing issue file; and no chain of parents loops back on itself.
+With a `depends-on` field: each dependency names an existing issue file, and
+no group of issues depends on each other in a cycle.
 Opt-in (config `check_references`, or `punch check --references`): each id
 of this tracker's shape mentioned in a body names an existing issue file.
 Comments: every folder beside an issue file belongs to an existing issue, and
@@ -16,7 +18,7 @@ import re
 from pathlib import Path
 
 from .comment import read_comment
-from .config import Config
+from .config import DEPENDS_ON, Config
 from .errors import PunchError
 from .ids import ALPHABET
 from .issue import Issue, issue_files, placement_error, read_issue
@@ -39,6 +41,44 @@ def parent_loop(config: Config, issue_id: str, parent: str) -> list[str] | None:
             return None
         node = read_issue(path, config).text("parent")
     return None
+
+
+def dependency_loop(config: Config, issue_id: str,
+                    dependencies: list[str]) -> list[str] | None:
+    """The loop giving `issue_id` these dependencies would close, as `[a, b, a]`; else None.
+
+    Searches breadth-first from each dependency through the `depends-on` of
+    each issue file it reaches, so the loop reported is a shortest one. A
+    missing file ends that branch; `punch check` reports it.
+    """
+    previous: dict[str, str] = {}
+    queue: list[str] = []
+    for dependency in dependencies:
+        if dependency == issue_id:
+            return [issue_id, issue_id]
+        if dependency not in previous:
+            previous[dependency] = issue_id
+            queue.append(dependency)
+    while queue:
+        node: str = queue.pop(0)
+        path: Path = config.issue_path(node)
+        if not path.is_file():
+            continue
+        for successor in read_issue(path, config).items(DEPENDS_ON):
+            if successor == issue_id:
+                return _loop_path(previous, issue_id, node)
+            if successor not in previous:
+                previous[successor] = node
+                queue.append(successor)
+    return None
+
+
+def _loop_path(previous: dict[str, str], start: str, last: str) -> list[str]:
+    """`[start, ..., last, start]` from the breadth-first `previous` links."""
+    path: list[str] = [last]
+    while path[0] != start:
+        path.insert(0, previous[path[0]])
+    return [*path, start]
 
 
 def check_issues(config: Config,
@@ -75,9 +115,18 @@ def check_issues(config: Config,
             problems.append(PunchError(
                 f"parent {parent!r} does not exist", path, issue.lines["parent"]
             ))
+        if config.has_links:
+            for dependency in issue.items(DEPENDS_ON):
+                if dependency not in stems:
+                    problems.append(PunchError(
+                        f"{DEPENDS_ON} {dependency!r} does not exist", path,
+                        issue.lines[DEPENDS_ON],
+                    ))
         if references:
             problems.extend(_dangling_references(config, issue, stems))
     problems.extend(_parent_loops(parsed))
+    if config.has_links:
+        problems.extend(_dependency_loops(parsed))
     problems.extend(_comment_problems(config))
     problems.sort(key=lambda p: (p.path or Path(), p.line or 0))
     return len(paths), problems
@@ -164,3 +213,81 @@ def _parent_loops(issues: dict[str, Issue]) -> list[PunchError]:
             ))
         done.update(chain)
     return problems
+
+
+def _dependency_loops(issues: dict[str, Issue]) -> list[PunchError]:
+    """One problem per group of issues that depend on each other in a cycle.
+
+    Each strongly connected component with a cycle is reported once, at the
+    `depends-on` line of its lowest id, naming a shortest loop through it.
+    """
+    graph: dict[str, list[str]] = {
+        stem: [d for d in issue.items(DEPENDS_ON) if d in issues]
+        for stem, issue in issues.items()
+    }
+    problems: list[PunchError] = []
+    for component in _components(graph):
+        start: str = min(component)
+        if len(component) == 1 and start not in graph[start]:
+            continue
+        members: set[str] = set(component)
+        previous: dict[str, str] = {}
+        queue: list[str] = [start]
+        last: str | None = None
+        while queue and last is None:
+            node: str = queue.pop(0)
+            for successor in sorted(graph[node]):
+                if successor == start:
+                    last = node
+                    break
+                if successor in members and successor not in previous:
+                    previous[successor] = node
+                    queue.append(successor)
+        assert last is not None  # a component with a cycle has a loop through any member
+        head: Issue = issues[start]
+        loop: list[str] = _loop_path(previous, start, last)
+        problems.append(PunchError(
+            f"dependency loop: {' -> '.join(loop)}", head.path, head.lines[DEPENDS_ON]
+        ))
+    return problems
+
+
+def _components(graph: dict[str, list[str]]) -> list[list[str]]:
+    """Strongly connected components of `graph` (Tarjan's algorithm, iterative)."""
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    components: list[list[str]] = []
+    for root in sorted(graph):
+        if root in index:
+            continue
+        work: list[tuple[str, int]] = [(root, 0)]
+        while work:
+            node, position = work[-1]
+            if position == 0:
+                index[node] = low[node] = len(index)
+                stack.append(node)
+                on_stack.add(node)
+            successors: list[str] = graph[node]
+            if position < len(successors):
+                work[-1] = (node, position + 1)
+                successor: str = successors[position]
+                if successor not in index:
+                    work.append((successor, 0))
+                elif successor in on_stack:
+                    low[node] = min(low[node], index[successor])
+                continue
+            work.pop()
+            if work:
+                low[work[-1][0]] = min(low[work[-1][0]], low[node])
+            if low[node] == index[node]:
+                component: list[str] = []
+                while True:
+                    member: str = stack.pop()
+                    on_stack.discard(member)
+                    component.append(member)
+                    if member == node:
+                        break
+                components.append(component)
+    return components

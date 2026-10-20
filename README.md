@@ -21,6 +21,8 @@ punch new "Title" --type task --priority high --rank 2.5   # rank orders within 
 punch new "Title" --type bug --body-file -         # body from stdin
 punch list                        # open issues: id status type priority category title
 punch list --all --label cli --json
+punch list --ready                # open issues whose depends-on issues are all closed
+punch set 7k3 depends-on=2x9,4ab  # 7k3 waits on two others; --blocked lists what's waiting
 punch search 'retry|backoff'      # title or body, case-insensitive; takes list's filters
 punch search retry --context 1    # plus each hit's matching lines (file line numbers), 1 line either side
 punch show pl-7k3qx                # or any unique start: pl-7k, 7k3

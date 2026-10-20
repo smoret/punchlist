@@ -12,10 +12,12 @@
     "rank",
     "category",
     "parent",
+    "depends-on",
     "labels",
     "created"
   ],
   "list_fields": [
+    "depends-on",
     "labels"
   ],
   "types": [

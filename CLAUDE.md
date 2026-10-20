@@ -23,7 +23,7 @@ It is a **map**, not an encyclopedia. A new module gets a paragraph (what it own
 
 This repo tracks its own work with `punch` (from `.venv`; config in `punchlist.json`, issues in `issues/`). Build the next item only when a real use asks for it.
 
-- Find work with `punch list`; read an issue with `punch show <id>`.
+- Find work with `punch list --ready` (open, nothing it depends on still open); read an issue with `punch show <id>`. When one issue must wait for another, record it: `punch set <id> depends-on=<other>`.
 - Close an issue with `punch close <id> --comment "what finished it" --author claude` **in the same commit** as the work that finishes it -- that is the point of keeping issues in the repo.
 - New work found along the way becomes `punch new "Title" --type task --body "..."` rather than a TODO comment.
 - Change header fields with `punch set <id> field=value`; edit an issue's body by hand with the editor. `punch check` validates both.

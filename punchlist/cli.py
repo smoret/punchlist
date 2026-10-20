@@ -16,10 +16,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .check import check_issues, parent_loop
+from .check import check_issues, dependency_loop, parent_loop
 from .comment import Comment, load_comments, write_comment
 from .config import (
-    CONFIG_NAME, REQUIRED_FIELDS, Config, add_categories, find_root, init_config, load_config,
+    CONFIG_NAME, DEPENDS_ON, REQUIRED_FIELDS, Config, add_categories, find_root, init_config,
+    load_config,
 )
 from .errors import PunchError, display_path
 from .ids import new_id, resolve_id
@@ -90,16 +91,30 @@ def cmd_new(args: argparse.Namespace) -> int:
         if not all(labels):
             raise PunchError("empty label")
         issue_fields["labels"] = labels
+    if args.depends_on:
+        # A new issue can't close a loop: nothing depends on it yet.
+        issue_fields[DEPENDS_ON] = _dependencies(config, args.depends_on)
     issue = Issue(issue_fields, _read_body(args))
     write_issue(issue, config, create=True)
     print(issue.id)
     return 0
 
 
+def _dependencies(config: Config, values: list[str]) -> list[str]:
+    """Comma-separated issue ids (short forms allowed) -> full ids, in order, without repeats."""
+    if not config.has_links:
+        raise PunchError(f"{DEPENDS_ON} is not a field in the config")
+    texts: list[str] = [item.strip() for value in values for item in value.split(",")]
+    if not all(texts):
+        raise PunchError(f"empty item in {DEPENDS_ON}")
+    return list(dict.fromkeys(resolve_id(config, text) for text in texts))
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     """Print matching issues, one line each: id status type priority category title."""
     config: Config = _load()
-    _print_issues(config, _select(config, _load_all(config), args), args.json)
+    everything: list[Issue] = _load_all(config)
+    _print_issues(config, _select(config, everything, args, everything), args.json)
     return 0
 
 
@@ -112,11 +127,12 @@ def cmd_search(args: argparse.Namespace) -> int:
         )
     except re.error as exc:
         raise PunchError(f"invalid regex {args.pattern!r}: {exc}") from None
+    everything: list[Issue] = _load_all(config)
     hits: list[Issue] = [
-        issue for issue in _load_all(config)
+        issue for issue in everything
         if pattern.search(issue.title) or pattern.search(issue.body)
     ]
-    selected: list[Issue] = _select(config, hits, args)
+    selected: list[Issue] = _select(config, hits, args, everything)
     snippets: dict[str, list[Snippet]] | None = None
     if args.context is not None:
         snippets = {issue.id: _snippets(issue, pattern, args.context) for issue in selected}
@@ -163,8 +179,13 @@ def _clip(line: str, pattern: re.Pattern[str]) -> str:
     return ("..." if start else "") + line[start:end] + ("..." if end < len(line) else "")
 
 
-def _select(config: Config, issues: list[Issue], args: argparse.Namespace) -> list[Issue]:
-    """The issues passing `list`'s filter flags, sorted by priority, created, then id."""
+def _select(config: Config, issues: list[Issue], args: argparse.Namespace,
+            everything: list[Issue]) -> list[Issue]:
+    """The `issues` passing the filter flags, sorted by `_sort_key`.
+
+    `everything` is every issue in the tracker, for --ready and --blocked to
+    look up dependencies that aren't themselves among `issues`.
+    """
     wanted: dict[str, str] = {}
     for name in FILTER_FIELDS:
         value: str | None = getattr(args, name)
@@ -185,8 +206,19 @@ def _select(config: Config, issues: list[Issue], args: argparse.Namespace) -> li
         if all(issue.text(name) == value for name, value in wanted.items())
         and all(label in issue.items("labels") for label in labels)
     ]
+    if args.ready or args.blocked:
+        if not config.has_links:
+            raise PunchError(f"--ready and --blocked need a {DEPENDS_ON} field in the config")
+        statuses: dict[str, str] = {issue.id: issue.status for issue in everything}
+        matches = [issue for issue in matches
+                   if _is_blocked(issue, statuses) == bool(args.blocked)]
     matches.sort(key=lambda issue: _sort_key(config, issue))
     return matches
+
+
+def _is_blocked(issue: Issue, statuses: dict[str, str]) -> bool:
+    """Whether any dependency isn't closed; a missing one counts, since it can't be done."""
+    return any(statuses.get(dependency) != "closed" for dependency in issue.items(DEPENDS_ON))
 
 
 def _sort_key(config: Config, issue: Issue) -> tuple[int, bool, float, str, str]:
@@ -239,6 +271,11 @@ def cmd_show(args: argparse.Namespace) -> int:
     comments: list[Comment] = load_comments(config, issue_id) if args.comments else []
     if args.json:
         row: dict[str, object] = {**_json_fields(issue, config), "body": issue.body}
+        if config.has_links:
+            # Derived, never stored: the issues listing this one in depends-on.
+            row["blocks"] = sorted(
+                other.id for other in _load_all(config) if issue_id in other.items(DEPENDS_ON)
+            )
         if args.comments:
             row["comments"] = [
                 {"author": c.author, "created": c.created, "body": c.body} for c in comments
@@ -352,6 +389,12 @@ def _set_value(config: Config, issue_id: str, name: str, value: str) -> str | No
         if name in REQUIRED_FIELDS:
             raise PunchError(f"{name} is required and cannot be removed")
         return None
+    if name == DEPENDS_ON:
+        dependencies: list[str] = _dependencies(config, [value])
+        cycle: list[str] | None = dependency_loop(config, issue_id, dependencies)
+        if cycle is not None:
+            raise PunchError(f"dependency loop: {' -> '.join(cycle)}")
+        return ", ".join(dependencies)
     if name in config.list_fields:
         items: list[str] = [item.strip() for item in value.split(",")]
         if not all(items):
@@ -474,6 +517,11 @@ def _add_filters(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--priority")
     parser.add_argument("--parent", help="only children of this issue id")
     parser.add_argument("--label", action="append", help="repeatable; issues must have every label")
+    readiness = parser.add_mutually_exclusive_group()
+    readiness.add_argument("--ready", action="store_true",
+                           help=f"only issues whose {DEPENDS_ON} issues are all closed")
+    readiness.add_argument("--blocked", action="store_true",
+                           help=f"only issues waiting on a {DEPENDS_ON} issue that isn't closed")
     parser.add_argument("--json", action="store_true", help="a JSON array of header fields")
 
 
@@ -493,6 +541,8 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--rank", help="sort key within a priority: a number like 2 or 2.5")
     new.add_argument("--category")
     new.add_argument("--parent", help="id of the parent issue")
+    new.add_argument("--depends-on", action="append",
+                     help="id of an issue this one waits on; repeatable, commas also separate")
     new.add_argument("--label", action="append", help="repeatable; commas also separate labels")
     body = new.add_mutually_exclusive_group()
     body.add_argument("--body", help="body text")

@@ -270,7 +270,7 @@ def test_show_json(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
     assert capsys.readouterr().out == (
         '{"id": "pl-low01", "title": "Low child", "type": "task", "status": "open", '
         '"priority": "low", "parent": "pl-epic1", "labels": ["a", "b"], "created": "2026-01-01", '
-        '"body": ""}\n'
+        '"body": "", "blocks": []}\n'
     )
 
 

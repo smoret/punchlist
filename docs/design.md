@@ -95,8 +95,8 @@ Everything enumerable is config, so new categories, types, or priorities need no
   "id_length": 5,
   "fanout": 1,
   "issues_dir": "issues",
-  "fields": ["id", "title", "type", "status", "priority", "rank", "category", "parent", "labels", "created"],
-  "list_fields": ["labels"],
+  "fields": ["id", "title", "type", "status", "priority", "rank", "category", "parent", "depends-on", "labels", "created"],
+  "list_fields": ["depends-on", "labels"],
   "types": ["epic", "feature", "task", "bug", "subtask"],
   "statuses": ["open", "closed"],
   "priorities": ["high", "medium", "low"],
@@ -117,6 +117,16 @@ Everything enumerable is config, so new categories, types, or priorities need no
 ## Hierarchy
 
 Epics and subtasks are expressed with `parent: <id>`. `subtask` exists as a type, but nothing requires a subtask to have a parent or forbids a task from having one -- the link carries the structure.
+
+## Links
+
+`depends-on: pl-aaaaa, pl-bbbbb` says an issue waits on others. Only the waiting issue stores the link; "what does pl-aaaaa block?" is derived by reading every issue, so there's one source of truth -- two files can't disagree -- and adding a link changes one file.
+
+- A dependency is satisfied when its status is `closed`. Any other status blocks, and so does a dependency whose file is missing, since it can't be confirmed done.
+- `punch list --ready` shows issues whose dependencies are all closed: what can be worked on now. `--blocked` shows those still waiting. Both also work on `search`, and combine with the other filters.
+- `punch show --json` adds `blocks`, the derived reverse.
+- `new --depends-on` and `set depends-on=a,b` resolve short ids, drop repeats, and refuse an unknown id, a self-dependency, or a loop (`dependency loop: pl-a -> pl-b -> pl-a`) before writing. `check` reports a dependency that doesn't exist, and each group of issues that depend on each other in a cycle once, at its lowest id.
+- `depends-on` is an ordinary config field and must also be a list field. `init` includes it; a tracker made before it existed adds `"depends-on"` to both `fields` and `list_fields` by hand.
 
 ## Comments
 
