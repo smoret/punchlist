@@ -255,6 +255,16 @@ def update_issue(path: Path, config: Config, changes: dict[str, str | None]) -> 
     path.write_text(edit_header(read_text(path), config, path, changes), encoding="utf-8")
 
 
+def write_edits(edits: list[tuple[Path, str]]) -> None:
+    """Write texts that edit_header already produced (and so validated), one per file.
+
+    For changes that span files: compute every file's new text first, so a bad
+    one is refused before any is written, then write them all.
+    """
+    for path, text in edits:
+        path.write_text(text, encoding="utf-8")
+
+
 def read_text(path: Path) -> str:
     """An issue file's text. Invalid UTF-8 is a PunchError naming the line."""
     data: bytes = path.read_bytes()

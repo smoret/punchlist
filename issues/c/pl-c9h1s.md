@@ -2,7 +2,8 @@
 id: pl-c9h1s
 title: Related links: a non-blocking link between issues
 type: feature
-status: open
+status: closed
+related: pl-xn3p7
 created: 2026-10-22
 ---
 

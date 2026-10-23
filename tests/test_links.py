@@ -173,8 +173,9 @@ def test_check_two_loops_sharing_an_issue_is_one_group(config: Config) -> None:
 def test_tracker_without_links(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                capsys: pytest.CaptureFixture[str]) -> None:
     data: dict[str, Any] = default_config("pl")
-    data["fields"].remove("depends-on")
-    data["list_fields"].remove("depends-on")
+    for link in ("depends-on", "related"):  # a tracker made before links existed
+        data["fields"].remove(link)
+        data["list_fields"].remove(link)
     (tmp_path / CONFIG_NAME).write_text(json.dumps(data), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     assert main(["new", "T", "--type", "task"]) == 0
@@ -183,3 +184,125 @@ def test_tracker_without_links(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     assert "--ready and --blocked need a depends-on field in the config" in capsys.readouterr().err
     assert main(["new", "T", "--type", "task", "--depends-on", "x"]) == 1
     assert "depends-on is not a field in the config" in capsys.readouterr().err
+    assert main(["new", "T", "--type", "task", "--related", "x"]) == 1
+    assert "related is not a field in the config" in capsys.readouterr().err
+
+
+@pytest.fixture
+def trio(config: Config, monkeypatch: pytest.MonkeyPatch) -> Config:
+    """pl-aaaaa, pl-bbbbb, pl-ccccc, unlinked; the working directory is the root."""
+    monkeypatch.chdir(config.root)
+    for issue_id in ("pl-aaaaa", "pl-bbbbb", "pl-ccccc"):
+        _make(config, issue_id)
+    return config
+
+
+def _related(config: Config, issue_id: str) -> list[str]:
+    return read_issue(config.issue_path(issue_id), config).items("related")
+
+
+def _all_bytes(config: Config) -> dict[Path, bytes]:
+    return {p: p.read_bytes() for p in config.issues_path.glob("*/*.md")}
+
+
+def test_set_related_writes_both_sides(trio: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "aaaaa", "related=bbbbb, ccc"]) == 0
+    assert capsys.readouterr().out == (
+        "updated pl-aaaaa: related\nupdated pl-bbbbb: related\nupdated pl-ccccc: related\n"
+    )
+    assert _related(trio, "pl-aaaaa") == ["pl-bbbbb", "pl-ccccc"]
+    assert _related(trio, "pl-bbbbb") == ["pl-aaaaa"]
+    assert _related(trio, "pl-ccccc") == ["pl-aaaaa"]
+    assert not _check(trio)
+
+
+def test_set_related_removes_both_sides(trio: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "aaaaa", "related=bbbbb,ccccc"]) == 0
+    assert main(["set", "ccccc", "related=aaaaa,bbbbb"]) == 0  # adds c<->b; a is already there
+    capsys.readouterr()
+    assert main(["set", "aaaaa", "related=ccccc"]) == 0  # drops a<->b only
+    assert capsys.readouterr().out == "updated pl-aaaaa: related\nupdated pl-bbbbb: related\n"
+    assert _related(trio, "pl-bbbbb") == ["pl-ccccc"]
+    assert main(["set", "ccccc", "related="]) == 0
+    assert _related(trio, "pl-ccccc") == []
+    assert _related(trio, "pl-aaaaa") == []
+    assert _related(trio, "pl-bbbbb") == []
+    assert "related:" not in trio.issue_path("pl-bbbbb").read_text(encoding="utf-8")
+    assert not _check(trio)
+
+
+def test_new_related_links_back(trio: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    [new_id] = _ids(capsys, "new", "Follow-up", "--type", "task", "--related", "aaaaa",
+                    "--related", "bbbbb,aaaaa")
+    assert _related(trio, new_id) == ["pl-aaaaa", "pl-bbbbb"]
+    assert _related(trio, "pl-aaaaa") == [new_id]
+    assert _related(trio, "pl-bbbbb") == [new_id]
+    assert not _check(trio)
+
+
+def test_closing_keeps_related(trio: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "aaaaa", "related=bbbbb"]) == 0
+    assert main(["close", "aaaaa"]) == 0
+    capsys.readouterr()
+    assert _related(trio, "pl-aaaaa") == ["pl-bbbbb"]
+    assert main(["show", "bbbbb", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["related"] == ["pl-aaaaa"]
+
+
+def test_related_never_blocks(trio: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "aaaaa", "related=bbbbb"]) == 0
+    capsys.readouterr()
+    assert _ids(capsys, "list", "--blocked") == []
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["set", "aaaaa", "related=aaaaa"], "pl-aaaaa can't be related to itself"),
+        (["set", "aaaaa", "related=bbbbb,zzz"], "no issue matches 'zzz'"),
+        (["set", "aaaaa", "related=bbbbb,,c"], "empty item in related"),
+        (["set", "aaaaa", "related=bbbbb", "related=ccccc"], "related is set twice"),
+        (["new", "T", "--type", "task", "--related", "zzz"], "no issue matches 'zzz'"),
+    ],
+)
+def test_related_rejected_writes_nothing(trio: Config, capsys: pytest.CaptureFixture[str],
+                                         args: list[str], message: str) -> None:
+    before = _all_bytes(trio)
+    assert main(args) == 1
+    assert message in capsys.readouterr().err
+    assert _all_bytes(trio) == before
+
+
+def test_corrupt_partner_stops_the_whole_change(trio: Config,
+                                                capsys: pytest.CaptureFixture[str]) -> None:
+    write_raw(trio, "pl-ddddd", "---\nid: pl-ddddd\ntitle: T\ntype: task\nstatus: open\n"
+                                "priority: urgent\ncreated: 2026-01-01\n---\n")
+    before = _all_bytes(trio)
+    assert main(["set", "aaaaa", "related=bbbbb,ddddd"]) == 1
+    assert "pl-ddddd.md:6: priority 'urgent'" in capsys.readouterr().err
+    assert _all_bytes(trio) == before  # not even pl-aaaaa or pl-bbbbb
+
+
+RELATED_HEADER = "---\nid: {id}\ntitle: T\ntype: task\nstatus: open\nrelated: {related}\ncreated: 2026-01-01\n---\n"
+
+
+def test_check_related(config: Config) -> None:
+    write_raw(config, "pl-aaaaa", RELATED_HEADER.format(id="pl-aaaaa", related="pl-bbbbb"))
+    _make(config, "pl-bbbbb")  # doesn't list pl-aaaaa back
+    write_raw(config, "pl-ccccc", RELATED_HEADER.format(id="pl-ccccc", related="pl-ccccc"))
+    write_raw(config, "pl-ddddd", RELATED_HEADER.format(id="pl-ddddd", related="pl-zzzzz"))
+    write_raw(config, "pl-eeeee", RELATED_HEADER.format(id="pl-eeeee", related="pl-fffff"))
+    write_raw(config, "pl-fffff", "junk\n")  # its own problem; no one-sided report against it
+    assert _check(config) == [
+        "issues/a/pl-aaaaa.md:6: related 'pl-bbbbb' does not list 'pl-aaaaa' back",
+        "issues/c/pl-ccccc.md:6: related lists the issue itself",
+        "issues/d/pl-ddddd.md:6: related 'pl-zzzzz' does not exist",
+        "issues/f/pl-fffff.md:1: first line must be '---'",
+    ]
+
+
+def test_config_related_must_be_a_list_field() -> None:
+    data: dict[str, Any] = default_config("pl")
+    data["list_fields"] = ["depends-on", "labels"]
+    with pytest.raises(PunchError, match="'related' must also be in list_fields"):
+        parse_config(data, Path("."), Path(CONFIG_NAME))

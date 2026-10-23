@@ -4,6 +4,7 @@ title: Comment counts in list
 type: feature
 status: open
 priority: low
+related: pl-zffgc
 created: 2026-10-19
 ---
 

@@ -4,6 +4,7 @@ title: Search comment text
 type: feature
 status: open
 priority: low
+related: pl-7f2hq
 created: 2026-10-19
 ---
 

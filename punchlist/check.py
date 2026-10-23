@@ -5,7 +5,8 @@ parser stops there), then checks across files: each `id:` matches its
 filename, which with correct buckets also makes ids unique; each `parent`
 names an existing issue file; and no chain of parents loops back on itself.
 With a `depends-on` field: each dependency names an existing issue file, and
-no group of issues depends on each other in a cycle.
+no group of issues depends on each other in a cycle. With a `related` field:
+each related id names another existing issue, which lists this one back.
 Opt-in (config `check_references`, or `punch check --references`): each id
 of this tracker's shape mentioned in a body names an existing issue file.
 Comments: every folder beside an issue file belongs to an existing issue, and
@@ -18,7 +19,7 @@ import re
 from pathlib import Path
 
 from .comment import read_comment
-from .config import DEPENDS_ON, Config
+from .config import DEPENDS_ON, RELATED, Config
 from .errors import PunchError
 from .ids import ALPHABET
 from .issue import Issue, issue_files, placement_error, read_issue
@@ -122,11 +123,23 @@ def check_issues(config: Config,
                         f"{DEPENDS_ON} {dependency!r} does not exist", path,
                         issue.lines[DEPENDS_ON],
                     ))
+        if config.has_related:
+            for other in issue.items(RELATED):
+                if other == issue.id:
+                    problems.append(PunchError(
+                        f"{RELATED} lists the issue itself", path, issue.lines[RELATED]
+                    ))
+                elif other not in stems:
+                    problems.append(PunchError(
+                        f"{RELATED} {other!r} does not exist", path, issue.lines[RELATED]
+                    ))
         if references:
             problems.extend(_dangling_references(config, issue, stems))
     problems.extend(_parent_loops(parsed))
     if config.has_links:
         problems.extend(_dependency_loops(parsed))
+    if config.has_related:
+        problems.extend(_one_sided_related(parsed))
     problems.extend(_comment_problems(config))
     problems.sort(key=lambda p: (p.path or Path(), p.line or 0))
     return len(paths), problems
@@ -212,6 +225,24 @@ def _parent_loops(issues: dict[str, Issue]) -> list[PunchError]:
                 f"parent loop: {' -> '.join([*loop, loop[0]])}", head.path, head.lines["parent"]
             ))
         done.update(chain)
+    return problems
+
+
+def _one_sided_related(issues: dict[str, Issue]) -> list[PunchError]:
+    """A related link the other issue doesn't list back, on the side that has it.
+
+    `set` and `new` write both sides, so this comes from a hand edit or a merge
+    that kept one file's side. A partner that didn't parse is skipped; its own
+    problem is already reported.
+    """
+    problems: list[PunchError] = []
+    for stem, issue in issues.items():
+        for other in issue.items(RELATED):
+            if other != stem and other in issues and stem not in issues[other].items(RELATED):
+                problems.append(PunchError(
+                    f"{RELATED} {other!r} does not list {stem!r} back", issue.path,
+                    issue.lines[RELATED],
+                ))
     return problems
 
 

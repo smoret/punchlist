@@ -4,6 +4,7 @@ title: show --json reads every issue to derive blocks
 type: task
 status: open
 priority: low
+related: pl-c9h1s
 created: 2026-10-22
 ---
 

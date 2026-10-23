@@ -95,8 +95,8 @@ Everything enumerable is config, so new categories, types, or priorities need no
   "id_length": 5,
   "fanout": 1,
   "issues_dir": "issues",
-  "fields": ["id", "title", "type", "status", "priority", "rank", "category", "parent", "depends-on", "labels", "created"],
-  "list_fields": ["depends-on", "labels"],
+  "fields": ["id", "title", "type", "status", "priority", "rank", "category", "parent", "depends-on", "related", "labels", "created"],
+  "list_fields": ["depends-on", "related", "labels"],
   "types": ["epic", "feature", "task", "bug", "subtask"],
   "statuses": ["open", "closed"],
   "priorities": ["high", "medium", "low"],
@@ -127,6 +127,15 @@ Epics and subtasks are expressed with `parent: <id>`. `subtask` exists as a type
 - `punch show --json` adds `blocks`, the derived reverse.
 - `new --depends-on` and `set depends-on=a,b` resolve short ids, drop repeats, and refuse an unknown id, a self-dependency, or a loop (`dependency loop: pl-a -> pl-b -> pl-a`) before writing. `check` reports a dependency that doesn't exist, and each group of issues that depend on each other in a cycle once, at its lowest id.
 - `depends-on` is an ordinary config field and must also be a list field. `init` includes it; a tracker made before it existed adds `"depends-on"` to both `fields` and `list_fields` by hand.
+
+`related: pl-aaaaa, pl-bbbbb` links issues without either one waiting: two angles on one problem, or a follow-up filed out of a closed issue. It never affects `--ready` or `--blocked`. Unlike `depends-on` it is **stored in both issues**:
+
+- Deriving the reverse means reading every issue on each `show`, a cost that grows with the tracker (closed issues stay on disk); a symmetric link has no direction to treat as the single source of truth anyway. Stored on both sides, plain `show` shows it from either end with no scan -- it's in each header.
+- `set A related=B,C` writes A and adds A to B and C; dropping a link (`related=C`, or `related=`) removes it from the other side too. `new --related` links back the same way. Agents run one command per intent, so a separate "now set the other side" step is the one that gets dropped. Every file's new text is computed and validated before any is written, so a bad id or a corrupt partner stops the whole change.
+- Short ids are resolved and repeats dropped; an unknown id or a link to itself is refused. Loops are fine.
+- Closing an issue keeps its links, so a closed issue still names its follow-ups.
+- `check` reports a related id with no file, an issue related to itself, and a one-sided link (A lists B, B doesn't list A) -- which only a hand edit or a merge that kept one file's side can produce. It's on by default: `check` reads every issue anyway.
+- Like `depends-on`, it must be a list field; `init` includes it and an older tracker adds it by hand.
 
 ## Comments
 

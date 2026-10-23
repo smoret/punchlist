@@ -27,6 +27,11 @@ REQUIRED_FIELDS: tuple[str, ...] = ("id", "title", "type", "status", "created")
 # stores the link; "what does X block" is derived by reading every issue.
 DEPENDS_ON = "depends-on"
 
+# The list field naming issues related without either waiting on the other.
+# Unlike depends-on it is stored on both issues, so `show` needs no scan;
+# `set` and `new` keep the two sides in step and `check` reports a one-sided link.
+RELATED = "related"
+
 # Header field -> the config key listing its allowed values.
 ENUM_FIELDS: dict[str, str] = {
     "type": "types",
@@ -88,6 +93,11 @@ class Config:
         """Whether this tracker has the `depends-on` field."""
         return DEPENDS_ON in self.fields
 
+    @property
+    def has_related(self) -> bool:
+        """Whether this tracker has the `related` field."""
+        return RELATED in self.fields
+
     def comments_path(self, issue_id: str) -> Path:
         """The directory holding an issue's comments, beside its file in its bucket."""
         return self.issue_path(issue_id).with_suffix("") / "comments"
@@ -115,9 +125,9 @@ def default_config(prefix: str) -> dict[str, Any]:
         "issues_dir": "issues",
         "fields": [
             "id", "title", "type", "status", "priority", "rank", "category", "parent",
-            "depends-on", "labels", "created",
+            "depends-on", "related", "labels", "created",
         ],
-        "list_fields": ["depends-on", "labels"],
+        "list_fields": ["depends-on", "related", "labels"],
         "types": ["epic", "feature", "task", "bug", "subtask"],
         "statuses": ["open", "closed"],
         "priorities": ["high", "medium", "low"],
@@ -211,8 +221,9 @@ def parse_config(data: Any, root: Path, path: Path) -> Config:
             raise PunchError(f"list field {field!r} is not in fields", path)
         if field in REQUIRED_FIELDS or field in ENUM_FIELDS or field in ("rank", "parent"):
             raise PunchError(f"{field!r} cannot be a list field", path)
-    if DEPENDS_ON in fields and DEPENDS_ON not in list_fields:
-        raise PunchError(f"{DEPENDS_ON!r} must also be in list_fields", path)
+    for link in (DEPENDS_ON, RELATED):
+        if link in fields and link not in list_fields:
+            raise PunchError(f"{link!r} must also be in list_fields", path)
 
     enums: dict[str, tuple[str, ...]] = {}
     for key in ENUM_FIELDS.values():

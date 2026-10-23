@@ -13,11 +13,13 @@
     "category",
     "parent",
     "depends-on",
+    "related",
     "labels",
     "created"
   ],
   "list_fields": [
     "depends-on",
+    "related",
     "labels"
   ],
   "types": [

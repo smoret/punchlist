@@ -19,15 +19,15 @@ from pathlib import Path
 from .check import check_issues, dependency_loop, parent_loop
 from .comment import Comment, load_comments, write_comment
 from .config import (
-    CONFIG_NAME, DEPENDS_ON, REQUIRED_FIELDS, Config, add_categories, find_root, init_config,
-    load_config,
+    CONFIG_NAME, DEPENDS_ON, RELATED, REQUIRED_FIELDS, Config, add_categories, find_root,
+    init_config, load_config,
 )
 from .errors import PunchError, display_path
 from .ids import new_id, resolve_id
 from .importer import ImportPlan, plan_import
 from .issue import (
-    FieldValue, Issue, format_issue, load_issues, parse_issue, rank_error, read_issue, read_text,
-    update_issue, write_issue,
+    FieldValue, Issue, edit_header, format_issue, load_issues, parse_issue, rank_error,
+    read_issue, read_text, update_issue, write_edits, write_issue,
 )
 
 # `list` filters on these scalar fields; each has a flag of the same name.
@@ -93,21 +93,51 @@ def cmd_new(args: argparse.Namespace) -> int:
         issue_fields["labels"] = labels
     if args.depends_on:
         # A new issue can't close a loop: nothing depends on it yet.
-        issue_fields[DEPENDS_ON] = _dependencies(config, args.depends_on)
+        issue_fields[DEPENDS_ON] = _link_ids(config, DEPENDS_ON, args.depends_on)
+    partners: list[tuple[str, Path, str]] = []
+    if args.related:
+        related: list[str] = _link_ids(config, RELATED, args.related)
+        issue_fields[RELATED] = related
+        partners = _partner_edits(config, fields["id"], [], related)
     issue = Issue(issue_fields, _read_body(args))
     write_issue(issue, config, create=True)
+    write_edits([(path, text) for _other, path, text in partners])
     print(issue.id)
     return 0
 
 
-def _dependencies(config: Config, values: list[str]) -> list[str]:
-    """Comma-separated issue ids (short forms allowed) -> full ids, in order, without repeats."""
-    if not config.has_links:
-        raise PunchError(f"{DEPENDS_ON} is not a field in the config")
+def _link_ids(config: Config, field: str, values: list[str]) -> list[str]:
+    """A link field's comma-separated ids (short ids allowed) -> full ids, in order, no repeats."""
+    if field not in config.fields:
+        raise PunchError(f"{field} is not a field in the config")
     texts: list[str] = [item.strip() for value in values for item in value.split(",")]
     if not all(texts):
-        raise PunchError(f"empty item in {DEPENDS_ON}")
+        raise PunchError(f"empty item in {field}")
     return list(dict.fromkeys(resolve_id(config, text) for text in texts))
+
+
+def _partner_edits(config: Config, issue_id: str, old: list[str],
+                   new: list[str]) -> list[tuple[str, Path, str]]:
+    """The other side of a related-link change: (partner id, its path, its new text).
+
+    Each newly related issue gains `issue_id`; each one no longer related loses
+    it. Partners already in the right state are left out. Computed (and
+    validated) before anything is written.
+    """
+    edits: list[tuple[str, Path, str]] = []
+    for other in [o for o in new if o not in old] + [o for o in old if o not in new]:
+        path: Path = config.issue_path(other)
+        if not path.is_file():
+            continue  # a dangling id being removed; check reports dangling ones
+        items: list[str] = read_issue(path, config).items(RELATED)
+        if other in new and issue_id not in items:
+            value: str | None = ", ".join([*items, issue_id])
+        elif other not in new and issue_id in items:
+            value = ", ".join(i for i in items if i != issue_id) or None
+        else:
+            continue
+        edits.append((other, path, edit_header(read_text(path), config, path, {RELATED: value})))
+    return edits
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -378,8 +408,18 @@ def cmd_set(args: argparse.Namespace) -> int:
     if not changed:
         print(f"{issue_id} unchanged")
         return 0
-    update_issue(path, config, {name: changes[name] for name in changed})
+    # Compute every file's new text first: a related change also edits partners,
+    # and a bad partner must stop the whole change before anything is written.
+    text: str = edit_header(read_text(path), config, path, {n: changes[n] for n in changed})
+    partners: list[tuple[str, Path, str]] = []
+    if RELATED in changed:
+        new: str | None = changes[RELATED]
+        partners = _partner_edits(config, issue_id, issue.items(RELATED),
+                                  new.split(", ") if new else [])
+    write_edits([(path, text), *((p, t) for _o, p, t in partners)])
     print(f"updated {issue_id}: {', '.join(changed)}")
+    for other, _path, _text in partners:
+        print(f"updated {other}: {RELATED}")
     return 0
 
 
@@ -390,11 +430,16 @@ def _set_value(config: Config, issue_id: str, name: str, value: str) -> str | No
             raise PunchError(f"{name} is required and cannot be removed")
         return None
     if name == DEPENDS_ON:
-        dependencies: list[str] = _dependencies(config, [value])
+        dependencies: list[str] = _link_ids(config, DEPENDS_ON, [value])
         cycle: list[str] | None = dependency_loop(config, issue_id, dependencies)
         if cycle is not None:
             raise PunchError(f"dependency loop: {' -> '.join(cycle)}")
         return ", ".join(dependencies)
+    if name == RELATED:
+        related: list[str] = _link_ids(config, RELATED, [value])
+        if issue_id in related:
+            raise PunchError(f"{issue_id} can't be related to itself")
+        return ", ".join(related)
     if name in config.list_fields:
         items: list[str] = [item.strip() for item in value.split(",")]
         if not all(items):
@@ -543,6 +588,8 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--parent", help="id of the parent issue")
     new.add_argument("--depends-on", action="append",
                      help="id of an issue this one waits on; repeatable, commas also separate")
+    new.add_argument("--related", action="append",
+                     help="id of a related issue (also linked back); repeatable, commas separate")
     new.add_argument("--label", action="append", help="repeatable; commas also separate labels")
     body = new.add_mutually_exclusive_group()
     body.add_argument("--body", help="body text")
