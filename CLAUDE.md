@@ -68,6 +68,14 @@ python -m pyright punchlist
 punch check                          # the repo's own issues
 ```
 
+## Versioning
+
+`version` in `pyproject.toml` is the only version. **Bump it in the same commit as any change to what the installed package does**, or downstream installs silently keep the old code: pip treats an unchanged version as already installed, even when pointed at a newer commit.
+
+- New feature or behavior change: minor (`0.1.0` -> `0.2.0`). Bug fix: patch (`0.1.0` -> `0.1.1`). Below 1.0 a breaking change is also a minor bump; say it breaks in the commit message.
+- No bump for commits that don't change the package: issue files, docs, tests, config.
+- Name the new version in the commit message.
+
 ## Working with collaborators
 
 - Design before implementing anything architectural; agree on it, then build.
