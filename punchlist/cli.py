@@ -382,7 +382,8 @@ def cmd_close(args: argparse.Namespace) -> int:
 
 
 def cmd_set(args: argparse.Namespace) -> int:
-    """Set or remove header fields: `field=value`, or `field=` to remove an optional one."""
+    """Set or remove header fields: `field=value` (a list field's whole list), `field=` to
+    remove an optional field, and `field+=a,b` / `field-=a` to add to or remove from a list."""
     config: Config = _load()
     issue_id: str = resolve_id(config, args.id)
     path: Path = config.issue_path(issue_id)
@@ -391,7 +392,9 @@ def cmd_set(args: argparse.Namespace) -> int:
     changes: dict[str, str | None] = {}
     for assignment in args.assignments:
         name, sep, raw = assignment.partition("=")
-        name = name.strip()
+        name, op = name.strip(), ""
+        if name.endswith(("+", "-")):
+            name, op = name[:-1].strip(), name[-1]
         if not sep:
             raise PunchError(f"expected field=value, got {assignment!r}")
         if name in changes:
@@ -400,7 +403,10 @@ def cmd_set(args: argparse.Namespace) -> int:
             raise PunchError(f"{name} is not a field in the config")
         if name == "id":
             raise PunchError("id cannot be changed; it names the file")
-        changes[name] = _set_value(config, issue_id, name, raw.strip())
+        value: str = raw.strip()
+        if op:
+            value = _list_after(config, issue, name, op, value)
+        changes[name] = _set_value(config, issue_id, name, value)
 
     changed: list[str] = [
         name for name, value in changes.items() if _field_text(issue, name) != value
@@ -417,10 +423,43 @@ def cmd_set(args: argparse.Namespace) -> int:
         partners = _partner_edits(config, issue_id, issue.items(RELATED),
                                   new.split(", ") if new else [])
     write_edits([(path, text), *((p, t) for _o, p, t in partners)])
-    print(f"updated {issue_id}: {', '.join(changed)}")
+    # A list's `=` replaces it, so say what went: a dropped link is easy to miss.
+    notes: list[str] = []
+    for name in changed:
+        if name in config.list_fields:
+            kept: str | None = changes[name]
+            removed: list[str] = [i for i in issue.items(name)
+                                  if i not in (kept.split(", ") if kept else [])]
+            notes.append(f"{name} (removed {', '.join(removed)})" if removed else name)
+        else:
+            notes.append(name)
+    print(f"updated {issue_id}: {', '.join(notes)}")
     for other, _path, _text in partners:
         print(f"updated {other}: {RELATED}")
     return 0
+
+
+def _list_after(config: Config, issue: Issue, name: str, op: str, value: str) -> str:
+    """The whole list `field+=value` or `field-=value` leaves, as `=` would take it.
+
+    Adding an id already there or removing one that isn't changes nothing, so a
+    retry is safe. `-=` matches a stored id exactly before resolving it, so a
+    link to a deleted issue can still be removed.
+    """
+    if name not in config.list_fields:
+        raise PunchError(f"{name}{op}= only works on list fields")
+    current: list[str] = issue.items(name)
+    texts: list[str] = [item.strip() for item in value.split(",")]
+    if not all(texts):
+        raise PunchError(f"empty item in {name}{op}=")
+    links: bool = name in (DEPENDS_ON, RELATED)
+    if op == "+":
+        added: list[str] = _link_ids(config, name, texts) if links else texts
+        return ", ".join(dict.fromkeys([*current, *added]))
+    gone: set[str] = {
+        text if text in current or not links else resolve_id(config, text) for text in texts
+    }
+    return ", ".join(item for item in current if item not in gone)
 
 
 def _set_value(config: Config, issue_id: str, name: str, value: str) -> str | None:
@@ -640,9 +679,16 @@ def build_parser() -> argparse.ArgumentParser:
                        help="the comment's author (default: $PUNCH_AUTHOR, then git's user.name)")
     close.set_defaults(func=cmd_close)
 
-    set_ = sub.add_parser("set", help="set header fields: field=value, or field= to remove")
+    set_ = sub.add_parser(
+        "set", help="set header fields: field=value, field= to remove, list+=id, list-=id",
+        description="field=value sets a field; for a list field (labels, depends-on, related) "
+                    "the value is the WHOLE list and replaces it. field= removes an optional "
+                    "field. list+=a,b adds to a list field and list-=a removes from it, "
+                    "leaving the rest. Removed list items are printed.",
+    )
     set_.add_argument("id", help="an issue id, or any unique start of one")
-    set_.add_argument("assignments", nargs="+", metavar="field=value")
+    set_.add_argument("assignments", nargs="+", metavar="field=value",
+                      help="field=value, field=, list+=a,b, or list-=a")
     set_.set_defaults(func=cmd_set)
 
     check = sub.add_parser("check", help="validate every issue file; exit 1 on any problem")

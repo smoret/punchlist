@@ -22,8 +22,9 @@ punch new "Title" --type bug --body-file -         # body from stdin
 punch list                        # open issues: id status type priority category title
 punch list --all --label cli --json
 punch list --ready                # open issues whose depends-on issues are all closed
-punch set 7k3 depends-on=2x9,4ab  # 7k3 waits on two others; --blocked lists what's waiting
-punch set 7k3 related=9qp         # a non-blocking link, written into both issues
+punch set 7k3 depends-on+=2x9     # 7k3 also waits on 2x9; --blocked lists what's waiting
+punch set 7k3 related+=9qp        # add a non-blocking link, written into both issues
+punch set 7k3 related-=9qp        # remove one link, from both issues
 punch search 'retry|backoff'      # title or body, case-insensitive; takes list's filters
 punch search retry --context 1    # plus each hit's matching lines (file line numbers), 1 line either side
 punch show pl-7k3qx                # or any unique start: pl-7k, 7k3
@@ -32,7 +33,8 @@ punch close pl-7k3qx
 punch close 7k3 --comment "Fixed by the retry change." --author claude
 punch comment 7k3 --author claude --body "Tried X; blocked on Y."   # author: flag, $PUNCH_AUTHOR, git
 punch show 7k3 --comments         # the issue, then its comments oldest first
-punch set 7k3 priority=high labels=cli,docs   # field= removes an optional field
+punch set 7k3 priority=high labels=cli,docs   # a list's = replaces the WHOLE list; field= removes
+punch set 7k3 labels+=api rank=2               # += adds to a list, -= removes; one op per field per call
 punch check                       # validate every issue file
 punch check --references          # also flag ids mentioned in bodies that don't exist
 punch import-md ROADMAP.md --dry-run   # what a markdown checklist would become

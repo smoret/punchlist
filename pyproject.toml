@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "punchlist"
-version = "0.1.0"
+version = "0.2.0"
 description = "A file-based issue tracker: one markdown file per issue, in the project's own git repo"
 authors = [
     { name = "Steven Moret", email = "smoret@gmail.com" },

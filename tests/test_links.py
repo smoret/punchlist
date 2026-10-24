@@ -93,8 +93,9 @@ def test_new_depends_on(chain: Config, capsys: pytest.CaptureFixture[str]) -> No
 
 
 def test_set_depends_on(chain: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    # `=` replaces the list: pl-eeeee's existing pl-aaaaa goes, and the output says so.
     assert main(["set", "eeeee", "depends-on=ccc, ddd"]) == 0
-    assert capsys.readouterr().out == "updated pl-eeeee: depends-on\n"
+    assert capsys.readouterr().out == "updated pl-eeeee: depends-on (removed pl-aaaaa)\n"
     assert read_issue(chain.issue_path("pl-eeeee"), chain).items("depends-on") == [
         "pl-ccccc", "pl-ddddd"
     ]
@@ -221,7 +222,9 @@ def test_set_related_removes_both_sides(trio: Config, capsys: pytest.CaptureFixt
     assert main(["set", "ccccc", "related=aaaaa,bbbbb"]) == 0  # adds c<->b; a is already there
     capsys.readouterr()
     assert main(["set", "aaaaa", "related=ccccc"]) == 0  # drops a<->b only
-    assert capsys.readouterr().out == "updated pl-aaaaa: related\nupdated pl-bbbbb: related\n"
+    assert capsys.readouterr().out == (
+        "updated pl-aaaaa: related (removed pl-bbbbb)\nupdated pl-bbbbb: related\n"
+    )
     assert _related(trio, "pl-bbbbb") == ["pl-ccccc"]
     assert main(["set", "ccccc", "related="]) == 0
     assert _related(trio, "pl-ccccc") == []
@@ -306,3 +309,84 @@ def test_config_related_must_be_a_list_field() -> None:
     data["list_fields"] = ["depends-on", "labels"]
     with pytest.raises(PunchError, match="'related' must also be in list_fields"):
         parse_config(data, Path("."), Path(CONFIG_NAME))
+
+
+def test_related_add_keeps_existing_links(trio: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    # The case that bit an agent: adding one link must not drop the others.
+    _make(trio, "pl-ddddd")
+    assert main(["set", "aaaaa", "related=bbbbb,ccccc"]) == 0
+    capsys.readouterr()
+    assert main(["set", "aaaaa", "related+=ddd"]) == 0
+    assert capsys.readouterr().out == "updated pl-aaaaa: related\nupdated pl-ddddd: related\n"
+    assert _related(trio, "pl-aaaaa") == ["pl-bbbbb", "pl-ccccc", "pl-ddddd"]
+    assert _related(trio, "pl-ddddd") == ["pl-aaaaa"]
+    assert not _check(trio)
+
+
+def test_related_remove_one(trio: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "aaaaa", "related=bbbbb,ccccc"]) == 0
+    capsys.readouterr()
+    assert main(["set", "aaaaa", "related-=bbb"]) == 0
+    assert capsys.readouterr().out == (
+        "updated pl-aaaaa: related (removed pl-bbbbb)\nupdated pl-bbbbb: related\n"
+    )
+    assert _related(trio, "pl-aaaaa") == ["pl-ccccc"]
+    assert _related(trio, "pl-bbbbb") == []
+    assert not _check(trio)
+
+
+def test_add_and_remove_are_safe_to_retry(trio: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "aaaaa", "related+=bbbbb"]) == 0
+    capsys.readouterr()
+    before = _all_bytes(trio)
+    assert main(["set", "aaaaa", "related+=bbbbb"]) == 0  # already there
+    assert main(["set", "aaaaa", "related-=ccccc"]) == 0  # not there
+    assert capsys.readouterr().out == "pl-aaaaa unchanged\npl-aaaaa unchanged\n"
+    assert _all_bytes(trio) == before
+
+
+def test_remove_a_link_to_a_deleted_issue(trio: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    write_raw(trio, "pl-ddddd", RELATED_HEADER.format(id="pl-ddddd", related="pl-zzzzz, pl-aaaaa"))
+    assert main(["set", "ddddd", "related-=pl-zzzzz"]) == 0  # exact match; no file to resolve
+    assert capsys.readouterr().out == "updated pl-ddddd: related (removed pl-zzzzz)\n"
+    assert _related(trio, "pl-ddddd") == ["pl-aaaaa"]
+
+
+def test_depends_on_add_checks_loops(chain: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "ccccc", "depends-on+=eeeee"]) == 0
+    capsys.readouterr()
+    assert read_issue(chain.issue_path("pl-ccccc"), chain).items("depends-on") == ["pl-eeeee"]
+    assert main(["set", "ccccc", "depends-on+=ddddd"]) == 1
+    assert "dependency loop: pl-ccccc -> pl-ddddd -> pl-ccccc" in capsys.readouterr().err
+
+
+def test_labels_add_and_remove(trio: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "aaaaa", "labels+=cli, docs"]) == 0
+    assert main(["set", "aaaaa", "labels+=docs,api", "rank=2"]) == 0
+    assert main(["set", "aaaaa", "labels-=cli"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "updated pl-aaaaa: labels",
+        "updated pl-aaaaa: labels, rank",
+        "updated pl-aaaaa: labels (removed cli)",
+    ]
+    assert read_issue(trio.issue_path("pl-aaaaa"), trio).items("labels") == ["docs", "api"]
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["aaaaa", "priority+=high"], "priority+= only works on list fields"),
+        (["aaaaa", "title-=x"], "title-= only works on list fields"),
+        (["aaaaa", "related+=bbbbb", "related-=ccccc"], "related is set twice"),
+        (["aaaaa", "related+=bbbbb,,c"], "empty item in related+="),
+        (["aaaaa", "related+=zzz"], "no issue matches 'zzz'"),
+        (["aaaaa", "related+=aaaaa"], "pl-aaaaa can't be related to itself"),
+        (["aaaaa", "colour+=red"], "colour is not a field in the config"),
+    ],
+)
+def test_add_remove_rejected(trio: Config, capsys: pytest.CaptureFixture[str],
+                             args: list[str], message: str) -> None:
+    before = _all_bytes(trio)
+    assert main(["set", *args]) == 1
+    assert message in capsys.readouterr().err
+    assert _all_bytes(trio) == before

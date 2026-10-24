@@ -355,7 +355,9 @@ def test_set_changes_and_adds(sample: Config, capsys: pytest.CaptureFixture[str]
 
 
 def test_set_removes_optional_field(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
-    assert _set(capsys, "low01", "parent=", "labels=") == "updated pl-low01: parent, labels\n"
+    assert _set(capsys, "low01", "parent=", "labels=") == (
+        "updated pl-low01: parent, labels (removed a, b)\n"
+    )
     issue = read_issue(sample.issue_path("pl-low01"), sample)
     assert issue.text("parent") is None
     assert issue.items("labels") == []

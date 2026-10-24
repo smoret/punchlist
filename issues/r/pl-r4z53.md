@@ -2,7 +2,7 @@
 id: pl-r4z53
 title: set on a list field: say it replaces, and report the links it removes
 type: feature
-status: open
+status: closed
 related: pl-c9h1s
 created: 2026-10-24
 ---
