@@ -3,7 +3,7 @@ id: pl-c9h1s
 title: Related links: a non-blocking link between issues
 type: feature
 status: closed
-related: pl-xn3p7
+related: pl-xn3p7, pl-r4z53
 created: 2026-10-22
 ---
 
