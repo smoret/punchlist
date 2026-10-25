@@ -350,7 +350,9 @@ def cmd_history(args: argparse.Namespace) -> int:
     """Print an issue's timeline from git, oldest first: date, commit, what changed, subject."""
     config: Config = _load()
     issue_id: str = resolve_id(config, args.id)
-    issue: Issue = read_issue(config.issue_path(issue_id), config)
+    issues: list[Issue] = [read_issue(config.issue_path(issue_id), config)]
+    if args.tree:
+        issues += _descendants(config, _load_all(config), issue_id)
     require_history(config.root)
     revs: list[str] = []
     since_date: str | None = None
@@ -360,19 +362,46 @@ def cmd_history(args: argparse.Namespace) -> int:
         else:
             revs = [f"{resolve_rev(config.root, args.since)}..HEAD"]
     entries: list[Entry] = [
-        entry for entry in _timeline(config, issue_id, revs)
+        entry for entry in _timeline(config, [issue.id for issue in issues], revs)
         if since_date is None or entry.commit.date >= since_date
     ]
     if args.json:
-        print(json.dumps([entry.as_json() for entry in entries], ensure_ascii=False))
+        print(json.dumps([entry.as_json(args.diff) for entry in entries], ensure_ascii=False))
         return 0
-    _print_issues(config, [issue], False)
+    _print_issues(config, issues, False)
     described: list[str] = ["; ".join(e.describe() for e in entry.events) for entry in entries]
     width: int = min(max(map(len, described), default=0), MAX_EVENTS_WIDTH)
     for entry, events in zip(entries, described):
         commit: Commit = entry.commit
-        print(f"{commit.date}  {commit.sha[:7]}  {events:<{width}}  {commit.subject}")
+        named: str = f"{entry.issue_id}  " if args.tree else ""
+        print(f"{commit.date}  {commit.sha[:7]}  {named}{events:<{width}}  {commit.subject}")
+        if args.diff:
+            for event in entry.events:
+                for line in event.diff or ():
+                    print(f"    {line}")
     return 0
+
+
+def _descendants(config: Config, everything: list[Issue], issue_id: str) -> list[Issue]:
+    """Every issue under `issue_id` by parent links, depth first, each issue's children in
+    `_sort_key` order; a parent loop ends where it comes back round."""
+    children: dict[str, list[Issue]] = {}
+    for issue in everything:
+        parent: str | None = issue.text("parent")
+        if parent is not None:
+            children.setdefault(parent, []).append(issue)
+    found: list[Issue] = []
+    seen: set[str] = {issue_id}
+
+    def visit(parent: str) -> None:
+        for child in sorted(children.get(parent, []), key=lambda i: _sort_key(config, i)):
+            if child.id not in seen:
+                seen.add(child.id)
+                found.append(child)
+                visit(child.id)
+
+    visit(issue_id)
+    return found
 
 
 # `history` pads its events column to the widest line, up to this; longer ones push the subject.
@@ -390,48 +419,53 @@ def _is_date(text: str) -> bool:
     return True
 
 
-def _timeline(config: Config, issue_id: str, revs: list[str]) -> list[Entry]:
-    """Every commit in `revs` (default: all of HEAD's history) that changed the issue's file
-    or comments, in any bucket, or that mentions it; oldest first."""
+def _timeline(config: Config, ids: list[str], revs: list[str]) -> list[Entry]:
+    """Every commit in `revs` (default: all of HEAD's history) that changed one of the issues'
+    files or comments, in any bucket, or that mentions one; oldest first, then in `ids` order.
+
+    However many issues, three git calls: one log of the commits touching them, one fetch
+    of every changed file before and after, and one log of the commits mentioning them.
+    """
     issues_dir: str = Path(config.issues_dir).as_posix()
     touched: list[Commit] = log(config.root, revs, [
-        f":(glob){issues_dir}/**/{issue_id}.md", f":(glob){issues_dir}/**/{issue_id}/comments/*",
+        spec for issue_id in ids for spec in (
+            f":(glob){issues_dir}/**/{issue_id}.md",
+            f":(glob){issues_dir}/**/{issue_id}/comments/*")
     ])
-    # Each change's file before (at its parent) and after; both fetched in one git call.
-    changes: list[tuple[Commit, Change]] = [
-        (commit, change) for commit in touched for change in commit.changes
-        if owns(change.path, issue_id) or owns(change.old_path, issue_id)
+    changes: list[tuple[str, Commit, Change]] = [
+        (issue_id, commit, change) for commit in touched for change in commit.changes
+        for issue_id in ids if owns(change.path, issue_id) or owns(change.old_path, issue_id)
     ]
     specs: list[str] = []
-    for commit, change in changes:
+    for _id, commit, change in changes:
         specs.append(f"{commit.sha}^:./{change.old_path}" if change.status != "A" else "")
         specs.append(f"{commit.sha}:./{change.path}" if change.status != "D" else "")
     blobs: list[bytes | None] = read_blobs(config.root, [s for s in specs if s])
     found: dict[str, bytes | None] = dict(zip([s for s in specs if s], blobs))
-    events: dict[str, list[Event]] = {}
-    for i, (commit, change) in enumerate(changes):
+    events: dict[tuple[str, str], list[Event]] = {}
+    for i, (issue_id, commit, change) in enumerate(changes):
         old: bytes | None = found.get(specs[2 * i])
         new: bytes | None = found.get(specs[2 * i + 1])
         classified: list[Event] = classify(change, old, new, config)
-        bucket: list[Event] = events.setdefault(commit.sha, [])
+        bucket: list[Event] = events.setdefault((issue_id, commit.sha), [])
         # The issue file's events before its comments', whatever order git listed them in.
         if is_comment(change.path):
             bucket.extend(classified)
         else:
             bucket[0:0] = classified
     entries: list[Entry] = [
-        Entry(issue_id, commit, tuple(events[commit.sha]))
-        for commit in touched if events.get(commit.sha)
+        Entry(issue_id, commit, tuple(events[issue_id, commit.sha]))
+        for commit in touched for issue_id in ids if events.get((issue_id, commit.sha))
     ]
-    shas: set[str] = {commit.sha for commit in touched}
-    short: str = issue_id.partition("-")[2]
-    # git's fixed-string grep narrows the search; the configured pattern decides.
+    # git's fixed-string grep narrows the search (several --grep match any); the
+    # configured pattern decides.
+    greps: list[str] = [f"--grep={issue_id.partition('-')[2]}" for issue_id in ids]
     entries += [
         Entry(issue_id, commit, (Event("referenced"),))
-        for commit in log(config.root, ["-F", f"--grep={short}", *revs])
-        if commit.sha not in shas and mentions(commit, issue_id, config)
+        for commit in log(config.root, ["-F", *greps, *revs]) for issue_id in ids
+        if (issue_id, commit.sha) not in events and mentions(commit, issue_id, config)
     ]
-    return sorted(entries, key=lambda entry: entry.commit.time)
+    return sorted(entries, key=lambda entry: (entry.commit.time, ids.index(entry.issue_id)))
 
 
 def cmd_close(args: argparse.Namespace) -> int:
@@ -759,6 +793,11 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("id", help="an issue id, or any unique start of one")
     history.add_argument("--since", metavar="DATE|REV",
                          help="only commits on or after a YYYY-MM-DD date, or after a revision")
+    history.add_argument("--diff", action="store_true",
+                         help="each body change as a unified diff under its line")
+    history.add_argument("--tree", action="store_true",
+                         help="also every issue under it by parent links, each line naming its "
+                              "issue")
     history.add_argument("--json", action="store_true",
                          help="a JSON array: per commit its sha, date, author, subject, events")
     history.set_defaults(func=cmd_history)

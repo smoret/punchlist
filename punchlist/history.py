@@ -38,8 +38,9 @@ class Event:
     old: FieldValue | None = None
     new: FieldValue | None = None
     header: dict[str, FieldValue] | None = None  # `created`: the first header
-    added: int | None = None  # `body`: lines added and removed
+    added: int | None = None  # `body`: lines added and removed, and the unified diff
     removed: int | None = None
+    diff: tuple[str, ...] | None = None  # hunks, `@@` lines included; no file headers
     path: str | None = None  # `moved`: the new path
     author: str | None = None  # comment events
 
@@ -68,8 +69,9 @@ class Event:
             return f"{self.kind.replace('-', ' ')} ({self.author})"
         return self.kind
 
-    def as_json(self) -> dict[str, object]:
-        """The event as a JSON record: `kind`, then whichever attributes it has."""
+    def as_json(self, with_diff: bool = False) -> dict[str, object]:
+        """The event as a JSON record: `kind`, then whichever attributes it has; a body
+        change's `diff` only `with_diff`."""
         row: dict[str, object] = {"kind": self.kind}
         if self.field is not None:
             row.update(field=self.field, old=self.old, new=self.new)
@@ -77,6 +79,8 @@ class Event:
             value: object = getattr(self, name)
             if value is not None:
                 row[name] = value
+        if with_diff and self.diff is not None:
+            row["diff"] = list(self.diff)
         return row
 
 
@@ -88,12 +92,12 @@ class Entry:
     commit: Commit
     events: tuple[Event, ...]
 
-    def as_json(self) -> dict[str, object]:
+    def as_json(self, with_diff: bool = False) -> dict[str, object]:
         """The entry as a JSON record: the issue, the commit's details, then its events."""
         return {
             "id": self.issue_id, "sha": self.commit.sha, "date": self.commit.date,
             "author": self.commit.author, "subject": self.commit.subject,
-            "events": [event.as_json() for event in self.events],
+            "events": [event.as_json(with_diff) for event in self.events],
         }
 
 
@@ -203,15 +207,13 @@ def diff(before: Revision, after: Revision, config: Config) -> list[Event]:
         if name != "status" and old != new:
             events.append(Event("field", name, old, new))
     if before.body != after.body:
-        added: int = 0
-        removed: int = 0
-        matcher = difflib.SequenceMatcher(
-            None, before.body.splitlines(), after.body.splitlines(), autojunk=False)
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            if tag != "equal":
-                removed += i2 - i1
-                added += j2 - j1
-        events.append(Event("body", added=added, removed=removed))
+        # One line of context around each change; [2:] drops the ---/+++ file headers.
+        lines: list[str] = list(difflib.unified_diff(
+            before.body.splitlines(), after.body.splitlines(), n=1, lineterm=""))[2:]
+        hunks: list[str] = [line for line in lines if not line.startswith("@@")]
+        events.append(Event(
+            "body", added=sum(line.startswith("+") for line in hunks),
+            removed=sum(line.startswith("-") for line in hunks), diff=tuple(lines)))
     return events
 
 

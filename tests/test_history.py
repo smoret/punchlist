@@ -75,6 +75,7 @@ def test_body_counts_lines(config: Config) -> None:
     assert _events(config, _issue(), _issue("new\n")) == ["body +1 -0"]
     [event] = classify(Change("M", PATH, PATH), before, _issue("one\n"), config)
     assert event.as_json() == {"kind": "body", "added": 0, "removed": 2}
+    assert event.as_json(with_diff=True)["diff"] == ["@@ -1,3 +1 @@", " one", "-two", "-three"]
 
 
 def test_malformed_repaired_reformatted(config: Config) -> None:
@@ -190,6 +191,52 @@ def test_history_json(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
              {"kind": "closed", "field": "status", "old": "open", "new": "closed"},
              {"kind": "comment-added", "author": "claude"}]},
     ]
+
+
+def test_history_diff(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    issue_id: str = _run(capsys, "new", "Thing", "--type", "task", "--body", "a\nb\nc").strip()
+    commit(repo, "Add")
+    path: Path = repo / "issues" / issue_id[3] / f"{issue_id}.md"
+    path.write_text(path.read_text(encoding="utf-8").replace("b\n", "B\n"), encoding="utf-8")
+    _run(capsys, "set", issue_id, "priority=low")
+    sha: str = commit(repo, "Edit", "2026-03-03T12:00:00")
+    lines: list[str] = _run(capsys, "history", issue_id, "--diff").splitlines()
+    assert lines[2:] == [
+        f"2026-03-03  {sha[:7]}  priority none -> low; body +1 -1  Edit",
+        "    @@ -1,3 +1,3 @@", "     a", "    -b", "    +B", "     c",
+    ]
+    rows = json.loads(_run(capsys, "history", issue_id, "--json", "--diff"))
+    assert rows[1]["events"][1]["diff"] == ["@@ -1,3 +1,3 @@", " a", "-b", "+B", " c"]
+    assert "diff" not in json.loads(_run(capsys, "history", issue_id, "--json"))[1]["events"][1]
+
+
+def test_history_tree(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    epic: str = _run(capsys, "new", "Epic", "--type", "epic").strip()
+    first: str = commit(repo, "Add epic")
+    child: str = _run(capsys, "new", "Child", "--type", "task", "--parent", epic).strip()
+    grandchild: str = _run(capsys, "new", "Grandchild", "--type", "subtask",
+                           "--parent", child).strip()
+    _run(capsys, "new", "Unrelated", "--type", "task")
+    second: str = commit(repo, "Add children", "2026-03-03T12:00:00")
+    third: str = commit(repo, f"Work on {child}", "2026-03-04T12:00:00")
+    _run(capsys, "close", grandchild)
+    fourth: str = commit(repo, f"Finish {grandchild}", "2026-03-05T12:00:00")
+
+    lines: list[str] = _run(capsys, "history", epic, "--tree").splitlines()
+    assert [line.split(" ")[0] for line in lines[:3]] == [epic, child, grandchild]
+    widest: int = len(f"created (subtask, parent {child})")
+    assert lines[3:] == [
+        f"2026-03-02  {first[:7]}  {epic}  {'created (epic)':<{widest}}  Add epic",
+        f"2026-03-03  {second[:7]}  {child}  {f'created (task, parent {epic})':<{widest}}  "
+        "Add children",
+        f"2026-03-03  {second[:7]}  {grandchild}  created (subtask, parent {child})  "
+        "Add children",
+        f"2026-03-04  {third[:7]}  {child}  {'referenced':<{widest}}  Work on {child}",
+        f"2026-03-05  {fourth[:7]}  {grandchild}  {'closed':<{widest}}  Finish {grandchild}",
+    ]
+    rows = json.loads(_run(capsys, "history", child, "--tree", "--json"))
+    assert [(row["id"], row["sha"]) for row in rows] == [
+        (child, second), (grandchild, second), (child, third), (grandchild, fourth)]
 
 
 def test_history_follows_a_move(repo: Path, config: Config,
