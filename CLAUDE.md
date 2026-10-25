@@ -70,11 +70,13 @@ punch check                          # the repo's own issues
 
 ## Versioning
 
-`version` in `pyproject.toml` is the only version. **Bump it in the same commit as any change to what the installed package does**, or downstream installs silently keep the old code: pip treats an unchanged version as already installed, even when pointed at a newer commit.
+`version` in `pyproject.toml` is the only version. **A version is a release, not a commit**: bump once per batch of work that reaches a downstream install, or downstream installs silently keep the old code -- pip treats an unchanged version as already installed, even when pointed at a newer commit.
 
-- New feature or behavior change: minor (`0.1.0` -> `0.2.0`). Bug fix: patch (`0.1.0` -> `0.1.1`). Below 1.0 a breaking change is also a minor bump; say it breaks in the commit message.
+- The first commit that changes what the installed package does after the last pushed version bumps it; later package commits before the next push don't. Check with `git log origin/main..main`: if a bump is already in there, don't bump again.
+- Push only at release points, when the batch is done: a pushed mid-batch commit carries a version that later commits will also claim.
+- New feature or behavior change: minor (`0.1.0` -> `0.2.0`). Bug fix only: patch (`0.1.0` -> `0.1.1`). Below 1.0 a breaking change is also a minor bump; say it breaks in the commit message. A batch takes the largest bump any of its commits needs.
 - No bump for commits that don't change the package: issue files, docs, tests, config.
-- Name the new version in the commit message.
+- Name the version in the commit message: `Version 0.3.0: ...` on the commit that bumps it, `(0.3.0)` on later ones in the batch.
 
 ## Working with collaborators
 
