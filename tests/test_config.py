@@ -119,6 +119,29 @@ def test_optional_key_type_is_checked(value: Any) -> None:
         _parse(check_references=value)
 
 
+def test_mention_pattern() -> None:
+    default: Config = _parse()
+    assert default.mention_regex("pl-7k3qx").search("pl-7k3qx: slice")
+    assert not default.mention_regex("pl-7k3qx").search("pl-7k3qxy")
+    # {short} is the id without its prefix; regex braces of the pattern's own survive.
+    short: Config = _parse(mention_pattern=r"fixes {short}\d{0,2}\b")
+    assert short.mention_regex("pl-7k3qx").search("fixes 7k3qx12")
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("", "mention_pattern must be a non-empty string"),
+        (1, "mention_pattern must be a non-empty string"),
+        (r"\bpl-\w+", r"mention_pattern must contain \{id\} or \{short\}"),
+        ("({id}", "mention_pattern is not a valid regex"),
+    ],
+)
+def test_mention_pattern_is_checked(value: Any, message: str) -> None:
+    with pytest.raises(PunchError, match=message):
+        _parse(mention_pattern=value)
+
+
 def test_misspelled_optional_key_is_unknown() -> None:
     with pytest.raises(PunchError, match="unknown key.*check_refrences"):
         _parse(check_refrences=True)

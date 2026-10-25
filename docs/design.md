@@ -77,6 +77,8 @@ Errors, each naming file and line: a line without `: `, an unknown field, a repe
 
 Fields are written in config order, so diffs stay minimal and a file punchlist wrote round-trips byte-for-byte. Every write parses its own output first, so punchlist never writes a file its own validation would reject.
 
+**Format versioning.** Files carry no format version. Two things can drift, and neither needs one yet: the header *syntax* has not changed, and when it first does, a version field arrives with it -- a file without one is v1, so no existing file has to change. The *schema* (fields, enums, categories) lives in `punchlist.json`, which is versioned by git alongside the issues, so the config that matched an old revision is the config at the same commit. Upgrading a tracker after a breaking change will be a `punch migrate` that rewrites current files in one reviewable commit; old revisions in history are never loaded as issues, so they never need upgrading.
+
 ## IDs
 
 - `<prefix>-<n chars>`. The prefix (lowercase letters and digits) and length (default 5) come from config.
@@ -101,11 +103,12 @@ Everything enumerable is config, so new categories, types, or priorities need no
   "statuses": ["open", "closed"],
   "priorities": ["high", "medium", "low"],
   "categories": [],
-  "check_references": false
+  "check_references": false,
+  "mention_pattern": "\\b{id}\\b"
 }
 ```
 
-- Every key is **known**: an unknown key (a typo, say) or a wrongly typed value is an error. Keys that existed from the start are required. Keys added later (`check_references`) are optional and take a documented default when absent, because a new required key would stop every existing tracker from loading the moment punchlist updates. `init` writes them all, so they're discoverable.
+- Every key is **known**: an unknown key (a typo, say) or a wrongly typed value is an error. Keys that existed from the start are required. Keys added later (`check_references`, `mention_pattern`) are optional and take a documented default when absent, because a new required key would stop every existing tracker from loading the moment punchlist updates. `init` writes them all, so they're discoverable.
 - `fanout` is the bucket width, from 1 to `id_length`: 1 gives 32 buckets, 2 gives 1,024. Choose it before the first issue; see Storage layout.
 - `fields` sets the allowed header fields and their write order. It must include the required five; extra custom fields are allowed.
 - The enumerated fields are `type`, `status`, `priority`, and `category`, validated against `types`, `statuses`, `priorities`, and `categories`. None of them may be a list field.
@@ -159,6 +162,24 @@ Tried X; blocked on Y.
 - `check` requires every folder beside an issue file to belong to an existing issue in that bucket, and every entry of a `comments/` folder to be a comment whose header parses and matches its filename.
 - `punch close <id> --comment "why"` closes with a reason in one step. The comment is written first, so a failure never leaves an issue closed without its reason; closing an already-closed issue adds nothing, so a retried close doesn't repeat the comment.
 - Editing or deleting a comment is a plain file edit.
+
+## History
+
+`punch history <id>` answers "what happened to this issue?" from git, so nothing new is stored or kept in sync. It lists, oldest first, every commit that changed the issue's file or one of its comments, in any bucket, plus every commit whose message mentions the id:
+
+```
+pl-7k3qx closed task high - Retry should back off on timeouts
+2026-03-02  3f2a1c0  created (task)                  Add retry issue
+2026-03-03  66a0ea3  priority none -> high           pl-7k3qx: prioritize
+2026-03-04  caf109c  referenced                      pl-7k3qx: first slice
+2026-03-06  7cd070f  closed; comment added (claude)  Finish retries
+```
+
+- Each changed file is classified by diffing it before and after the commit: `created`, `closed`, `reopened`, `field` (old -> new; for a list field the whole list, printed as `+added -removed`), `body` (+N -M lines), `moved` (re-bucketed), `deleted`, `reformatted` (bytes changed, fields and body didn't), and `comment-added`/`-edited`/`-deleted`. A commit that touched neither file but whose message matches is `referenced`.
+- **Old revisions are read leniently.** They record the past, not what is valid now, so only the shared header syntax is required: a field or enum value today's config dropped is still a change worth naming. A revision without the syntax is `malformed`, and the next readable one `repaired`. This is the one place punchlist doesn't fail closed; current files are still checked as strictly as before.
+- **Which commits mention an issue is config**, `mention_pattern`: a regex in which `{id}` stands for the full id and `{short}` for the part after the prefix. The default, `\b{id}\b`, matches the id as a whole word anywhere in the message, whether a project leads subjects with it or uses a trailer; `fixes {short}` suits one that writes short ids.
+- `--since` takes a `YYYY-MM-DD` date (commits authored on or after it) or a revision (commits after it: `<rev>..HEAD`), so an agent can re-check an issue it read before. `--json` gives one record per commit -- `id`, `sha`, `date`, `author`, `subject`, `events` -- each event its `kind`, and `field`/`old`/`new` for field and status changes.
+- Outside a git repository, or in a shallow clone, it refuses rather than print a short timeline. It costs a fixed number of git calls however long the history: two `git log`s and one `git cat-file --batch` for every file version.
 
 ## Importing a markdown roadmap
 

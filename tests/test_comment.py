@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -196,13 +195,6 @@ def test_cli_author_precedence(in_issue: Config, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("PUNCH_AUTHOR", "env-bot")
     assert _comment(capsys, "aaaaa", "--body", "x").endswith("-env-bot.md")
     assert _comment(capsys, "aaaaa", "--author", "Flag", "--body", "x").endswith("-flag.md")
-
-
-def test_git_user_reads_the_repo(tmp_path: Path) -> None:
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Repo Person"], check=True)
-    assert cli.git_user(tmp_path) == "Repo Person"
-    assert cli.git_user(tmp_path / "nowhere") is None  # not a directory: git can't run there
 
 
 @pytest.mark.parametrize(

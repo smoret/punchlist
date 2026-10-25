@@ -15,17 +15,22 @@ A map, not an encyclopedia: the principles, then one paragraph per module saying
 Imports run one way, down this list; nothing imports `cli`.
 
 ```
-cli          argv, cwd, env, stdin/stdout, subprocesses -- the only module that touches them
-check        importer
+cli          argv, cwd, env, stdin/stdout -- the only module that touches them
+check        importer     history
 ids          comment
 issue        includes split_header, the header format both issues and comments use
 config       includes Config.issue_path, the only id -> path mapping (comments_path derives from it)
+git          every subprocess; the only module that runs one
 errors
 ```
 
 ## Modules
 
 **`errors.py`** owns `PunchError`, the one exception the CLI reports. It carries an optional `path` and `line`, and `describe(base)` renders `path:line: message` with the path relative to `base`, in forward slashes. Anything else escaping a command is a bug, not a user error, so nothing should catch broad exceptions to convert them.
+
+**`git.py`** owns every git subprocess: `git_user` (the author default) and reading history -- `require_history` (refuses outside a repository and in a shallow clone), `resolve_rev`, `log` (commits oldest first, with their changed files when given pathspecs), and `read_blobs` (every needed file version in one `cat-file --batch`). Paths are posix and relative to the punchlist root, which may be a repository subdirectory. It must not interpret what it reads: it knows commits and bytes, not issues.
+
+**`history.py`** owns what a commit did to an issue. `classify` turns one changed file -- the issue's file or a comment, before and after -- into `Event`s, and `Entry` pairs them with their commit; both render to text (`describe`) and JSON (`as_json`), so every history view names events alike. Past revisions are read leniently (`read_revision`: the header syntax only, not today's config), since they record the past rather than claim validity now; this is the one deliberate exception to failing closed. It must not run git or print: `cli` fetches commits and blobs through `git` and hands them in.
 
 **`config.py`** owns `punchlist.json`: finding the root (the nearest directory at or above a given start that has one, like `.git`), validating it, and writing it (`init_config`, `add_categories`). Unknown keys and wrongly typed values are errors; original keys are required, and keys added since (`OPTIONAL_KEYS`) are optional with defaults so older configs keep loading. It owns the storage layout too: `Config.issue_path(id)` is **the only place an id becomes a path** (`<issues_dir>/<bucket>/<id>.md`, the bucket being the first `fanout` characters after the prefix), and nothing else may build an issue path, or a file could be written where lookups and `check` don't expect it. It must not fill in a default for any key outside `OPTIONAL_KEYS` -- `default_config` is what `init` writes, not a fallback. It names the link fields: `DEPENDS_ON` (`Config.has_links`) is stored only on the waiting issue, and nothing may store the reverse; `RELATED` (`Config.has_related`) is stored on both issues, and every write keeps the pair in step. It also owns which fields are enumerated (`ENUM_FIELDS`) and the shared "not one of" message (`Config.choice_error`), so the parser and the CLI word that error the same way.
 
@@ -39,7 +44,7 @@ errors
 
 **`importer.py`** owns turning a markdown checklist into planned issues. `plan_import` is pure: text in, `ImportPlan` out (issues with ids, a note count, unclassified line ranges, categories the config lacks). It must not write anything; the CLI decides whether to refuse, add categories, and write. Its parser follows markdown's list-item rule -- a continuation belongs to the deepest open bullet whose content column it reaches -- and every line either lands somewhere or is reported. Links are rewritten relative to each issue's own bucket directory. When the config has `rank`, each issue's rank is its position in the source, so the checklist's order survives. The shapes and the title and body rules are in [docs/design.md](docs/design.md#importing-a-markdown-roadmap).
 
-**`cli.py`** owns argument parsing, the working directory, environment variables, subprocesses (`git_user`), stdin and stdout, and exit codes; it is the only module that prints or calls `Path.cwd()`. Each subcommand is a `cmd_<name>(args) -> int`. It validates flag values before writing so an error names the flag rather than a file that was never written, and it is where user-facing wording lives: hints read like other tools ("run `punch check` to find corrupt files"). Commands that read every issue stop at the first bad file and point at `punch check`; `check` itself reports them all. `list` and `search` share their filter flags (`_add_filters`), filtering (`_select`), sort order (`_sort_key`: priority, rank, created, id), and output (`_print_issues`), so a new filter, sort key, or output format lands in both. `--ready`/`--blocked` look dependencies up in every issue, not just the ones being filtered, so a search hit is judged by issues the search didn't match; `show --json` derives `blocks` the same way. `search --context` adds grep-style snippets under each hit, numbered by file line via `Issue.body_line`.
+**`cli.py`** owns argument parsing, the working directory, environment variables, stdin and stdout, and exit codes; it is the only module that prints or calls `Path.cwd()`. Each subcommand is a `cmd_<name>(args) -> int`. It validates flag values before writing so an error names the flag rather than a file that was never written, and it is where user-facing wording lives: hints read like other tools ("run `punch check` to find corrupt files"). Commands that read every issue stop at the first bad file and point at `punch check`; `check` itself reports them all. `list` and `search` share their filter flags (`_add_filters`), filtering (`_select`), sort order (`_sort_key`: priority, rank, created, id), and output (`_print_issues`), so a new filter, sort key, or output format lands in both. `--ready`/`--blocked` look dependencies up in every issue, not just the ones being filtered, so a search hit is judged by issues the search didn't match; `show --json` derives `blocks` the same way. `search --context` adds grep-style snippets under each hit, numbered by file line via `Issue.body_line`. `history` (`_timeline`) is the glue between `git` and `history`: one log of the commits touching an issue's file or comments, one fetch of their before-and-after versions, one log of commits mentioning it (`Config.mention_regex`).
 
 ## Conventions across modules
 

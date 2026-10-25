@@ -33,6 +33,8 @@ punch close pl-7k3qx
 punch close 7k3 --comment "Fixed by the retry change." --author claude
 punch comment 7k3 --author claude --body "Tried X; blocked on Y."   # author: flag, $PUNCH_AUTHOR, git
 punch show 7k3 --comments         # the issue, then its comments oldest first
+punch history 7k3                 # from git: each commit that changed it or mentions it
+punch history 7k3 --since 2026-03-01 --json   # or --since <rev>: only what's newer
 punch set 7k3 priority=high labels=cli,docs   # a list's = replaces the WHOLE list; field= removes
 punch set 7k3 labels+=api rank=2               # += adds to a list, -= removes; one op per field per call
 punch check                       # validate every issue file

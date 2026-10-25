@@ -45,7 +45,11 @@ ENUM_FIELDS: dict[str, str] = {
 # stop loading the moment punchlist updates.
 OPTIONAL_KEYS: dict[str, Any] = {
     "check_references": False,
+    "mention_pattern": r"\b{id}\b",
 }
+
+# What `mention_pattern` may name: the full id, or the id without its prefix.
+MENTION_PLACEHOLDERS: tuple[str, ...] = ("{id}", "{short}")
 
 PREFIX_RE = re.compile(r"[a-z0-9]+")
 FIELD_RE = re.compile(r"[a-z][a-z0-9_-]*")
@@ -67,6 +71,7 @@ class Config:
     priorities: tuple[str, ...]  # highest first
     categories: tuple[str, ...]
     check_references: bool = False  # `check` also flags body mentions of missing ids
+    mention_pattern: str = OPTIONAL_KEYS["mention_pattern"]  # commits that mention an issue
 
     @property
     def issues_path(self) -> Path:
@@ -97,6 +102,10 @@ class Config:
     def has_related(self) -> bool:
         """Whether this tracker has the `related` field."""
         return RELATED in self.fields
+
+    def mention_regex(self, issue_id: str) -> re.Pattern[str]:
+        """`mention_pattern` for one issue: `{id}` and `{short}` replaced, matched literally."""
+        return _mention_regex(self.mention_pattern, issue_id)
 
     def comments_path(self, issue_id: str) -> Path:
         """The directory holding an issue's comments, beside its file in its bucket."""
@@ -196,6 +205,14 @@ def parse_config(data: Any, root: Path, path: Path) -> Config:
     check_references: Any = data["check_references"]
     if not isinstance(check_references, bool):
         raise PunchError("check_references must be true or false", path)
+    mention_pattern: str = _string(data, "mention_pattern", path)
+    if not any(p in mention_pattern for p in MENTION_PLACEHOLDERS):
+        raise PunchError(f"mention_pattern must contain {' or '.join(MENTION_PLACEHOLDERS)}",
+                         path)
+    try:
+        _mention_regex(mention_pattern, "x-0")
+    except re.error as exc:
+        raise PunchError(f"mention_pattern is not a valid regex: {exc}", path) from None
 
     prefix: str = _string(data, "prefix", path)
     if not PREFIX_RE.fullmatch(prefix):
@@ -246,7 +263,15 @@ def parse_config(data: Any, root: Path, path: Path) -> Config:
         priorities=enums["priorities"],
         categories=enums["categories"],
         check_references=check_references,
+        mention_pattern=mention_pattern,
     )
+
+
+def _mention_regex(pattern: str, issue_id: str) -> re.Pattern[str]:
+    # Plain replace, not str.format: a regex has braces of its own (`\d{2}`).
+    short: str = issue_id.partition("-")[2]
+    return re.compile(pattern.replace("{id}", re.escape(issue_id))
+                      .replace("{short}", re.escape(short)))
 
 
 def _string(data: dict[str, Any], key: str, path: Path) -> str:

@@ -11,7 +11,6 @@ import datetime
 import json
 import os
 import re
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,10 +22,12 @@ from .config import (
     init_config, load_config,
 )
 from .errors import PunchError, display_path
+from .git import Change, Commit, git_user, log, read_blobs, require_history, resolve_rev
+from .history import Entry, Event, classify, is_comment, mentions, owns
 from .ids import new_id, resolve_id
 from .importer import ImportPlan, plan_import
 from .issue import (
-    FieldValue, Issue, edit_header, format_issue, load_issues, parse_issue, rank_error,
+    DATE_RE, FieldValue, Issue, edit_header, format_issue, load_issues, parse_issue, rank_error,
     read_issue, read_text, update_issue, write_edits, write_issue,
 )
 
@@ -345,14 +346,92 @@ def _author(flag: str | None, root: Path) -> str:
     return author
 
 
-def git_user(root: Path) -> str | None:
-    """git config user.name as seen from `root`, or None if git or the setting is missing."""
+def cmd_history(args: argparse.Namespace) -> int:
+    """Print an issue's timeline from git, oldest first: date, commit, what changed, subject."""
+    config: Config = _load()
+    issue_id: str = resolve_id(config, args.id)
+    issue: Issue = read_issue(config.issue_path(issue_id), config)
+    require_history(config.root)
+    revs: list[str] = []
+    since_date: str | None = None
+    if args.since is not None:
+        if _is_date(args.since):
+            since_date = args.since
+        else:
+            revs = [f"{resolve_rev(config.root, args.since)}..HEAD"]
+    entries: list[Entry] = [
+        entry for entry in _timeline(config, issue_id, revs)
+        if since_date is None or entry.commit.date >= since_date
+    ]
+    if args.json:
+        print(json.dumps([entry.as_json() for entry in entries], ensure_ascii=False))
+        return 0
+    _print_issues(config, [issue], False)
+    described: list[str] = ["; ".join(e.describe() for e in entry.events) for entry in entries]
+    width: int = min(max(map(len, described), default=0), MAX_EVENTS_WIDTH)
+    for entry, events in zip(entries, described):
+        commit: Commit = entry.commit
+        print(f"{commit.date}  {commit.sha[:7]}  {events:<{width}}  {commit.subject}")
+    return 0
+
+
+# `history` pads its events column to the widest line, up to this; longer ones push the subject.
+MAX_EVENTS_WIDTH = 40
+
+
+def _is_date(text: str) -> bool:
+    """Whether `text` is a YYYY-MM-DD date, rather than a revision."""
+    if not DATE_RE.fullmatch(text):
+        return False
     try:
-        result = subprocess.run(["git", "config", "user.name"], cwd=root, capture_output=True,
-                                text=True, encoding="utf-8", check=False)
-    except OSError:
-        return None
-    return result.stdout.strip() or None if result.returncode == 0 else None
+        datetime.date.fromisoformat(text)
+    except ValueError:
+        return False
+    return True
+
+
+def _timeline(config: Config, issue_id: str, revs: list[str]) -> list[Entry]:
+    """Every commit in `revs` (default: all of HEAD's history) that changed the issue's file
+    or comments, in any bucket, or that mentions it; oldest first."""
+    issues_dir: str = Path(config.issues_dir).as_posix()
+    touched: list[Commit] = log(config.root, revs, [
+        f":(glob){issues_dir}/**/{issue_id}.md", f":(glob){issues_dir}/**/{issue_id}/comments/*",
+    ])
+    # Each change's file before (at its parent) and after; both fetched in one git call.
+    changes: list[tuple[Commit, Change]] = [
+        (commit, change) for commit in touched for change in commit.changes
+        if owns(change.path, issue_id) or owns(change.old_path, issue_id)
+    ]
+    specs: list[str] = []
+    for commit, change in changes:
+        specs.append(f"{commit.sha}^:./{change.old_path}" if change.status != "A" else "")
+        specs.append(f"{commit.sha}:./{change.path}" if change.status != "D" else "")
+    blobs: list[bytes | None] = read_blobs(config.root, [s for s in specs if s])
+    found: dict[str, bytes | None] = dict(zip([s for s in specs if s], blobs))
+    events: dict[str, list[Event]] = {}
+    for i, (commit, change) in enumerate(changes):
+        old: bytes | None = found.get(specs[2 * i])
+        new: bytes | None = found.get(specs[2 * i + 1])
+        classified: list[Event] = classify(change, old, new, config)
+        bucket: list[Event] = events.setdefault(commit.sha, [])
+        # The issue file's events before its comments', whatever order git listed them in.
+        if is_comment(change.path):
+            bucket.extend(classified)
+        else:
+            bucket[0:0] = classified
+    entries: list[Entry] = [
+        Entry(issue_id, commit, tuple(events[commit.sha]))
+        for commit in touched if events.get(commit.sha)
+    ]
+    shas: set[str] = {commit.sha for commit in touched}
+    short: str = issue_id.partition("-")[2]
+    # git's fixed-string grep narrows the search; the configured pattern decides.
+    entries += [
+        Entry(issue_id, commit, (Event("referenced"),))
+        for commit in log(config.root, ["-F", f"--grep={short}", *revs])
+        if commit.sha not in shas and mentions(commit, issue_id, config)
+    ]
+    return sorted(entries, key=lambda entry: entry.commit.time)
 
 
 def cmd_close(args: argparse.Namespace) -> int:
@@ -671,6 +750,18 @@ def build_parser() -> argparse.ArgumentParser:
     comment_body.add_argument("--body", help="comment text")
     comment_body.add_argument("--body-file", help="read the comment from a file, or `-` for stdin")
     comment.set_defaults(func=cmd_comment)
+
+    history = sub.add_parser(
+        "history", help="an issue's timeline from git: date, commit, what changed, subject",
+        description="Every commit that changed the issue's file or comments, or whose message "
+                    "mentions its id (config mention_pattern), oldest first.",
+    )
+    history.add_argument("id", help="an issue id, or any unique start of one")
+    history.add_argument("--since", metavar="DATE|REV",
+                         help="only commits on or after a YYYY-MM-DD date, or after a revision")
+    history.add_argument("--json", action="store_true",
+                         help="a JSON array: per commit its sha, date, author, subject, events")
+    history.set_defaults(func=cmd_history)
 
     close = sub.add_parser("close", help="set an issue's status to closed")
     close.add_argument("id", help="an issue id, or any unique start of one")
