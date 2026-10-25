@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Config
+from .config import Config, write_file
 from .errors import PunchError
 from .issue import DELIMITER, Header, read_text, split_header
 
@@ -155,8 +155,7 @@ def write_comment(config: Config, issue_id: str, author: str, body: str,
         parse_comment(text, path)  # never write a file check would reject
         directory.mkdir(parents=True, exist_ok=True)
         try:
-            with path.open("x", encoding="utf-8") as file:
-                file.write(text)
+            write_file(path, text, config.newline, create=True)
         except FileExistsError:
             continue
         return path

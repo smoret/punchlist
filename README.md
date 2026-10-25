@@ -16,6 +16,7 @@ pip install -e ".[dev]"
 
 ```bash
 punch init --prefix pl            # write punchlist.json in the current directory
+punch init --prefix pl --line-endings lf   # write every file LF (default: the platform's)
 punch new "Title" --type task --category tooling   # prints the new id
 punch new "Title" --type task --priority high --rank 2.5   # rank orders within a priority
 punch new "Title" --type bug --body-file -         # body from stdin

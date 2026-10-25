@@ -2,7 +2,7 @@
 id: pl-55yep
 title: Request: configurable line endings for files punch writes
 type: feature
-status: open
+status: closed
 created: 2026-10-25
 ---
 

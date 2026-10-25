@@ -19,8 +19,8 @@ from pathlib import Path
 from .check import check_issues, dependency_loop, parent_loop
 from .comment import Comment, load_comments, write_comment
 from .config import (
-    CONFIG_NAME, DEPENDS_ON, RELATED, REQUIRED_FIELDS, Config, add_categories, find_root,
-    init_config, load_config,
+    CONFIG_NAME, DEPENDS_ON, LINE_ENDINGS, RELATED, REQUIRED_FIELDS, Config, add_categories,
+    find_root, init_config, load_config,
 )
 from .errors import PunchError, display_path
 from .git import Change, Commit, git_user, log, read_blobs, require_history, resolve_rev
@@ -58,7 +58,7 @@ def _load_all(config: Config) -> list[Issue]:
 
 def cmd_init(args: argparse.Namespace) -> int:
     """Write a default punchlist.json in the current directory."""
-    path: Path = init_config(Path.cwd(), args.prefix)
+    path: Path = init_config(Path.cwd(), args.prefix, args.line_endings)
     print(f"wrote {path}")
     return 0
 
@@ -105,7 +105,7 @@ def cmd_new(args: argparse.Namespace) -> int:
         partners = _partner_edits(config, fields["id"], [], related)
     issue = Issue(issue_fields, _read_body(args))
     write_issue(issue, config, create=True)
-    write_edits([(path, text) for _other, path, text in partners])
+    write_edits([(path, text) for _other, path, text in partners], config)
     print(issue.id)
     return 0
 
@@ -600,7 +600,7 @@ def cmd_set(args: argparse.Namespace) -> int:
         new: str | None = changes[RELATED]
         partners = _partner_edits(config, issue_id, issue.items(RELATED),
                                   new.split(", ") if new else [])
-    write_edits([(path, text), *((p, t) for _o, p, t in partners)])
+    write_edits([(path, text), *((p, t) for _o, p, t in partners)], config)
     # A list's `=` replaces it, so say what went: a dropped link is easy to miss.
     notes: list[str] = []
     for name in changed:
@@ -800,6 +800,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = sub.add_parser("init", help=f"write a default {CONFIG_NAME} here")
     init.add_argument("--prefix", required=True, help="issue id prefix, e.g. pl for pl-7k3qx")
+    init.add_argument("--line-endings", choices=list(LINE_ENDINGS), default="platform",
+                      help="line endings of every file punch writes (default: the platform's)")
     init.set_defaults(func=cmd_init)
 
     new = sub.add_parser("new", help="create an issue; prints its id")

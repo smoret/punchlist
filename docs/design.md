@@ -40,7 +40,7 @@ The deciding requirement: **issue changes are files in the project's own git rep
 - One function maps an id to its path (`Config.issue_path`); nothing else builds issue paths. Short-id lookup searches every bucket.
 - Status is a field, not a folder, for the same reason.
 - Closed issues stay on disk with `status: closed`; `list` shows open ones by default.
-- Files are UTF-8, written with the platform's line endings so a Windows checkout under `core.autocrlf` sees no churn.
+- Files are UTF-8. By default they are written with the platform's line endings, so a Windows checkout under `core.autocrlf` sees no churn; a repository that fixes its endings on disk (`.gitattributes` `eol=lf`) sets `line_endings` to match (see Config). Reads accept either.
 
 ## Issue file format
 
@@ -104,11 +104,12 @@ Everything enumerable is config, so new categories, types, or priorities need no
   "priorities": ["high", "medium", "low"],
   "categories": [],
   "check_references": false,
-  "mention_pattern": "\\b{id}\\b"
+  "mention_pattern": "\\b{id}\\b",
+  "line_endings": "platform"
 }
 ```
 
-- Every key is **known**: an unknown key (a typo, say) or a wrongly typed value is an error. Keys that existed from the start are required. Keys added later (`check_references`, `mention_pattern`) are optional and take a documented default when absent, because a new required key would stop every existing tracker from loading the moment punchlist updates. `init` writes them all, so they're discoverable.
+- Every key is **known**: an unknown key (a typo, say) or a wrongly typed value is an error. Keys that existed from the start are required. Keys added later (`check_references`, `mention_pattern`, `line_endings`) are optional and take a documented default when absent, because a new required key would stop every existing tracker from loading the moment punchlist updates. `init` writes them all, so they're discoverable.
 - `fanout` is the bucket width, from 1 to `id_length`: 1 gives 32 buckets, 2 gives 1,024. Choose it before the first issue; see Storage layout.
 - `fields` sets the allowed header fields and their write order. It must include the required five; extra custom fields are allowed.
 - The enumerated fields are `type`, `status`, `priority`, and `category`, validated against `types`, `statuses`, `priorities`, and `categories`. None of them may be a list field.
@@ -116,6 +117,7 @@ Everything enumerable is config, so new categories, types, or priorities need no
 - `rank` is an ordinary entry in `fields`, so a config written before it existed has no rank until `"rank"` is added there by hand; until then `set rank=` is refused as an unknown field. It may not be a list field.
 - `statuses` must include `open` and `closed`, which the commands rely on.
 - `categories` may be empty, in which case any `category:` value is an error.
+- `line_endings` is `platform` (CRLF on Windows, LF elsewhere), `lf`, or `crlf`, and applies to every file punch writes: issues, comments, and `punchlist.json` itself. `punch init --line-endings lf` sets it, so even the first file is written in it. There is no "keep each file's existing endings" choice: a new issue or comment has no file to copy from, so it would still need one of these as a fallback, and a fixed choice already matches a repository's `.gitattributes`.
 
 ## Hierarchy
 

@@ -46,10 +46,15 @@ ENUM_FIELDS: dict[str, str] = {
 OPTIONAL_KEYS: dict[str, Any] = {
     "check_references": False,
     "mention_pattern": r"\b{id}\b",
+    "line_endings": "platform",
 }
 
 # What `mention_pattern` may name: the full id, or the id without its prefix.
 MENTION_PLACEHOLDERS: tuple[str, ...] = ("{id}", "{short}")
+
+# `line_endings` -> the `newline` argument of open(): None translates to the
+# platform's endings (CRLF on Windows, matching a `core.autocrlf` checkout).
+LINE_ENDINGS: dict[str, str | None] = {"platform": None, "lf": "\n", "crlf": "\r\n"}
 
 PREFIX_RE = re.compile(r"[a-z0-9]+")
 FIELD_RE = re.compile(r"[a-z][a-z0-9_-]*")
@@ -72,6 +77,12 @@ class Config:
     categories: tuple[str, ...]
     check_references: bool = False  # `check` also flags body mentions of missing ids
     mention_pattern: str = OPTIONAL_KEYS["mention_pattern"]  # commits that mention an issue
+    line_endings: str = OPTIONAL_KEYS["line_endings"]  # what every write uses; see write_file
+
+    @property
+    def newline(self) -> str | None:
+        """`line_endings` as open()'s `newline` argument."""
+        return LINE_ENDINGS[self.line_endings]
 
     @property
     def issues_path(self) -> Path:
@@ -166,16 +177,16 @@ def load_config(root: Path) -> Config:
     return parse_config(data, root, path)
 
 
-def init_config(root: Path, prefix: str) -> Path:
-    """Write a default punchlist.json in `root`; refuse if one exists."""
+def init_config(root: Path, prefix: str, line_endings: str = "platform") -> Path:
+    """Write a default punchlist.json in `root`, itself in `line_endings`; refuse if one exists."""
     path: Path = root / CONFIG_NAME
     if path.exists():
         raise PunchError("already exists", path)
     if not PREFIX_RE.fullmatch(prefix):
         raise PunchError(f"prefix {prefix!r} must be lowercase letters and digits")
-    data: dict[str, Any] = default_config(prefix)
-    parse_config(data, root, path)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    data: dict[str, Any] = {**default_config(prefix), "line_endings": line_endings}
+    config: Config = parse_config(data, root, path)
+    write_file(path, json.dumps(data, indent=2) + "\n", config.newline)
     return path
 
 
@@ -186,8 +197,18 @@ def add_categories(root: Path, names: list[str]) -> Config:
     data: Any = json.loads(path.read_text(encoding="utf-8"))
     data["categories"] = [*data["categories"], *names]
     config: Config = parse_config(data, root, path)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    write_file(path, json.dumps(data, indent=2) + "\n", config.newline)
     return config
+
+
+def write_file(path: Path, text: str, newline: str | None, *, create: bool = False) -> None:
+    """Write `text` (with `\\n` line endings) as UTF-8, translating them to `newline`.
+
+    Every file punch writes goes through here, so `line_endings` applies to all
+    of them. With `create`, an existing file raises FileExistsError.
+    """
+    with path.open("x" if create else "w", encoding="utf-8", newline=newline) as file:
+        file.write(text)
 
 
 def parse_config(data: Any, root: Path, path: Path) -> Config:
@@ -213,6 +234,9 @@ def parse_config(data: Any, root: Path, path: Path) -> Config:
         _mention_regex(mention_pattern, "x-0")
     except re.error as exc:
         raise PunchError(f"mention_pattern is not a valid regex: {exc}", path) from None
+    line_endings: Any = data["line_endings"]
+    if not isinstance(line_endings, str) or line_endings not in LINE_ENDINGS:
+        raise PunchError(f"line_endings must be one of: {', '.join(LINE_ENDINGS)}", path)
 
     prefix: str = _string(data, "prefix", path)
     if not PREFIX_RE.fullmatch(prefix):
@@ -264,6 +288,7 @@ def parse_config(data: Any, root: Path, path: Path) -> Config:
         categories=enums["categories"],
         check_references=check_references,
         mention_pattern=mention_pattern,
+        line_endings=line_endings,
     )
 
 

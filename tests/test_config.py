@@ -142,6 +142,19 @@ def test_mention_pattern_is_checked(value: Any, message: str) -> None:
         _parse(mention_pattern=value)
 
 
+def test_line_endings() -> None:
+    # Absent means the platform's, as before the key existed.
+    assert _parse().newline is None
+    assert _parse(line_endings="lf").newline == "\n"
+    assert _parse(line_endings="crlf").newline == "\r\n"
+
+
+@pytest.mark.parametrize("value", ["LF", "cr", "", None, ["lf"]])
+def test_line_endings_are_checked(value: Any) -> None:
+    with pytest.raises(PunchError, match="line_endings must be one of: platform, lf, crlf"):
+        _parse(line_endings=value)
+
+
 def test_misspelled_optional_key_is_unknown() -> None:
     with pytest.raises(PunchError, match="unknown key.*check_refrences"):
         _parse(check_refrences=True)

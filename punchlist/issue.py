@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import REQUIRED_FIELDS, Config
+from .config import REQUIRED_FIELDS, Config, write_file
 from .errors import PunchError
 
 DELIMITER = "---"
@@ -252,17 +252,17 @@ def edit_header(text: str, config: Config, path: Path, changes: dict[str, str | 
 
 def update_issue(path: Path, config: Config, changes: dict[str, str | None]) -> None:
     """Apply `changes` to an issue file's header in place (see edit_header)."""
-    path.write_text(edit_header(read_text(path), config, path, changes), encoding="utf-8")
+    write_file(path, edit_header(read_text(path), config, path, changes), config.newline)
 
 
-def write_edits(edits: list[tuple[Path, str]]) -> None:
+def write_edits(edits: list[tuple[Path, str]], config: Config) -> None:
     """Write texts that edit_header already produced (and so validated), one per file.
 
     For changes that span files: compute every file's new text first, so a bad
     one is refused before any is written, then write them all.
     """
     for path, text in edits:
-        path.write_text(text, encoding="utf-8")
+        write_file(path, text, config.newline)
 
 
 def read_text(path: Path) -> str:
@@ -318,7 +318,7 @@ def load_issues(config: Config) -> list[Issue]:
 
 
 def write_issue(issue: Issue, config: Config, *, create: bool = False) -> Path:
-    """Write an issue to `config.issue_path(id)`, in the platform's line endings.
+    """Write an issue to `config.issue_path(id)`, in the config's line endings.
 
     The text is parsed back before writing, so this never writes a file that
     `punch check` would reject. With `create`, an existing file is an error
@@ -329,8 +329,7 @@ def write_issue(issue: Issue, config: Config, *, create: bool = False) -> Path:
     parse_issue(text, config, path)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with path.open("x" if create else "w", encoding="utf-8") as file:
-            file.write(text)
+        write_file(path, text, config.newline, create=create)
     except FileExistsError:
         raise PunchError("already exists", path) from None
     issue.path = path

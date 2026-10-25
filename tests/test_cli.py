@@ -24,6 +24,44 @@ def test_init_writes_loadable_config(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert capsys.readouterr().out.startswith("wrote ")
 
 
+@pytest.mark.parametrize(("choice", "eol"), [("lf", b"\n"), ("crlf", b"\r\n")])
+def test_init_line_endings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                           choice: str, eol: bytes) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "--prefix", "pl", "--line-endings", choice]) == 0
+    assert load_config(tmp_path).line_endings == choice
+    assert _only_endings((tmp_path / CONFIG_NAME).read_bytes(), eol)
+
+
+def _only_endings(raw: bytes, eol: bytes) -> bool:
+    """Whether `raw` has line breaks and every one is `eol`."""
+    rest: bytes = raw.replace(eol, b"")
+    return len(rest) < len(raw) and b"\r" not in rest and b"\n" not in rest
+
+
+@pytest.mark.parametrize(("choice", "eol"), [("lf", b"\n"), ("crlf", b"\r\n")])
+def test_every_write_uses_line_endings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                       capsys: pytest.CaptureFixture[str],
+                                       choice: str, eol: bytes) -> None:
+    # new, set (one file and a related pair), comment, close, and import's category rewrite.
+    data = default_config("pl")
+    data["line_endings"] = choice
+    (tmp_path / CONFIG_NAME).write_text(json.dumps(data, indent=2), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    first = _new(capsys, "First", "--type", "task", "--body", "One.\n\nTwo.")
+    second = _new(capsys, "Second", "--type", "task", "--related", first)
+    assert main(["set", first, "priority=high"]) == 0
+    assert main(["comment", first, "--author", "claude", "--body", "A\nB"]) == 0
+    assert main(["close", second, "--comment", "Done.", "--author", "claude"]) == 0
+    (tmp_path / "ROADMAP.md").write_text("## Docs\n\n- [ ] **T**\n", encoding="utf-8")
+    assert main(["import-md", "ROADMAP.md", "--add-categories"]) == 0
+    written: list[Path] = [tmp_path / CONFIG_NAME,
+                           *(p for p in (tmp_path / "issues").rglob("*.md"))]
+    assert len(written) == 6  # config, three issues, two comments
+    for path in written:
+        assert _only_endings(path.read_bytes(), eol), path
+
+
 def test_init_refuses_existing(root: Path, monkeypatch: pytest.MonkeyPatch,
                                capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.chdir(root)
