@@ -10,8 +10,10 @@ from helpers import commit, git, write_raw
 
 from punchlist.cli import main
 from punchlist.config import Config, load_config
-from punchlist.git import Change
-from punchlist.history import Event, Revision, classify, diff, owns, read_revision
+from punchlist.git import Change, log
+from punchlist.history import (
+    Event, Revision, change_groups, classify, diff, issue_of, owns, read_revision,
+)
 
 PATH = "issues/a/pl-aaaaa.md"
 COMMENT = "issues/a/pl-aaaaa/comments/20261019T141205Z-claude.md"
@@ -120,6 +122,25 @@ def test_diff_is_empty_for_equal_revisions(config: Config) -> None:
     assert not diff(revision, revision, config)
 
 
+def test_issue_of() -> None:
+    assert issue_of(PATH) == "pl-aaaaa"
+    assert issue_of("issues/pl-aaaaa.md") == "pl-aaaaa"
+    assert issue_of(COMMENT) == "pl-aaaaa"
+    assert issue_of("issues/a/notes.txt") is None
+
+
+def test_change_groups(config: Config) -> None:
+    def groups(old: bytes | None, new: bytes) -> list[str]:
+        return change_groups(tuple(classify(
+            Change("A" if old is None else "M", PATH, PATH), old, new, config)))
+
+    assert groups(None, _issue()) == ["created"]
+    assert groups(_issue(), _issue("x\n", status="closed")) == ["closed", "rescoped"]
+    assert groups(_issue(status="closed"), _issue()) == ["reopened"]
+    assert groups(_issue(), _issue(title="B")) == ["rescoped"]
+    assert not groups(_issue(), _issue(priority="low"))
+
+
 def test_owns() -> None:
     assert owns(PATH, "pl-aaaaa")
     assert owns("issues/pl-aaaaa.md", "pl-aaaaa")
@@ -178,6 +199,8 @@ def test_history_since(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert [line[12:19] for line in by_rev[1:]] == [shas[4][:7]]
     assert main(["history", issue_id, "--since", "nope"]) == 1
     assert "unknown revision 'nope'" in capsys.readouterr().err
+    assert main(["history", issue_id, "--since", "2026-02-30"]) == 1
+    assert "'2026-02-30' is not a real date" in capsys.readouterr().err
 
 
 def test_history_json(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -237,6 +260,56 @@ def test_history_tree(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     rows = json.loads(_run(capsys, "history", child, "--tree", "--json"))
     assert [(row["id"], row["sha"]) for row in rows] == [
         (child, second), (grandchild, second), (child, third), (grandchild, fourth)]
+
+
+def test_changed(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    old: str = _run(capsys, "new", "Old", "--type", "task").strip()
+    reopened: str = _run(capsys, "new", "Reopened", "--type", "bug").strip()
+    _run(capsys, "close", reopened)
+    commit(repo, "Before the range", "2026-03-01T12:00:00")
+    start: str = commit(repo, "Start", "2026-03-02T12:00:00")
+    new: str = _run(capsys, "new", "New", "--type", "task", "--category", "docs").strip()
+    _run(capsys, "set", reopened, "status=open")
+    created: str = commit(repo, "Add new; reopen", "2026-03-03T12:00:00")
+    _run(capsys, "set", old, "title=Old, renamed", "priority=low")
+    _run(capsys, "close", new)
+    closed: str = commit(repo, "Rename old; close new", "2026-03-04T12:00:00")
+
+    expected: list[str] = [
+        "created (1)", f"  2026-03-03  {created[:7]}  {new}  New",
+        "closed (1)", f"  2026-03-04  {closed[:7]}  {new}  New",
+        "reopened (1)", f"  2026-03-03  {created[:7]}  {reopened}  Reopened",
+        "rescoped (1)", f"  2026-03-04  {closed[:7]}  {old}  Old, renamed",
+    ]
+    assert _run(capsys, "changed", start[:7]).splitlines() == expected
+    assert _run(capsys, "changed", "2026-03-03").splitlines() == expected
+    # Filters apply to the issues as they are now; every status by default.
+    assert _run(capsys, "changed", start, "--category", "docs").splitlines() == expected[:4]
+    assert _run(capsys, "changed", start, "--status", "open", "--type", "bug").splitlines() == [
+        "reopened (1)", f"  2026-03-03  {created[:7]}  {reopened}  Reopened"]
+    assert _run(capsys, "changed", closed) == f"nothing changed since {closed}\n"
+    rows = json.loads(_run(capsys, "changed", created, "--json"))
+    assert {group: [(r["id"], r["sha"]) for r in rs] for group, rs in rows.items()} == {
+        "created": [], "closed": [(new, closed)], "reopened": [], "rescoped": [(old, closed)]}
+
+
+def test_changed_splits_a_rename_between_issues(repo: Path,
+                                                capsys: pytest.CaptureFixture[str]) -> None:
+    # One issue's file deleted and a near-copy added in the same commit: git may call it a
+    # rename, but it is two issues.
+    path: Path = repo / PATH
+    path.parent.mkdir(parents=True)
+    path.write_bytes(_issue("Long body\n" * 20))
+    start: str = commit(repo, "Add")
+    path.unlink()
+    other: Path = repo / "issues" / "b" / "pl-bbbbb.md"
+    other.parent.mkdir(parents=True)
+    other.write_bytes(_issue("Long body\n" * 20).replace(b"pl-aaaaa", b"pl-bbbbb"))
+    sha: str = commit(repo, "Replace", "2026-03-03T12:00:00")
+    [replace] = log(repo, [f"{start}..HEAD"], ["issues"])
+    assert replace.changes == (Change("R", "issues/b/pl-bbbbb.md", PATH),)
+    assert _run(capsys, "changed", start).splitlines() == [
+        "created (1)", f"  2026-03-03  {sha[:7]}  pl-bbbbb  A"]
 
 
 def test_history_follows_a_move(repo: Path, config: Config,

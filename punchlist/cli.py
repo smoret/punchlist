@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,7 +24,9 @@ from .config import (
 )
 from .errors import PunchError, display_path
 from .git import Change, Commit, git_user, log, read_blobs, require_history, resolve_rev
-from .history import Entry, Event, classify, is_comment, mentions, owns
+from .history import (
+    CHANGE_GROUPS, Entry, Event, change_groups, classify, is_comment, issue_of, mentions, owns,
+)
 from .ids import new_id, resolve_id
 from .importer import ImportPlan, plan_import
 from .issue import (
@@ -353,14 +356,7 @@ def cmd_history(args: argparse.Namespace) -> int:
     issues: list[Issue] = [read_issue(config.issue_path(issue_id), config)]
     if args.tree:
         issues += _descendants(config, _load_all(config), issue_id)
-    require_history(config.root)
-    revs: list[str] = []
-    since_date: str | None = None
-    if args.since is not None:
-        if _is_date(args.since):
-            since_date = args.since
-        else:
-            revs = [f"{resolve_rev(config.root, args.since)}..HEAD"]
+    revs, since_date = _since(config, args.since)
     entries: list[Entry] = [
         entry for entry in _timeline(config, [issue.id for issue in issues], revs)
         if since_date is None or entry.commit.date >= since_date
@@ -379,6 +375,41 @@ def cmd_history(args: argparse.Namespace) -> int:
             for event in entry.events:
                 for line in event.diff or ():
                     print(f"    {line}")
+    return 0
+
+
+def cmd_changed(args: argparse.Namespace) -> int:
+    """Print the issues created, closed, reopened, or rescoped in a range of history, grouped
+    by what happened: `date sha id title`, a line per commit."""
+    config: Config = _load()
+    revs, since_date = _since(config, args.since)
+    everything: list[Issue] = _load_all(config)
+    selected: dict[str, Issue] = {
+        issue.id: issue for issue in _select(config, everything, args, everything)
+    }
+    issues_dir: str = Path(config.issues_dir).as_posix()
+    commits: list[Commit] = log(config.root, revs, [
+        f":(glob){issues_dir}/*.md", f":(glob){issues_dir}/*/*.md",
+    ])
+    groups: dict[str, list[Entry]] = {group: [] for group in CHANGE_GROUPS}
+    for entry in _entries(config, commits, lambda path: (
+            issue_of(path) if issue_of(path) in selected else None)):
+        if since_date is None or entry.commit.date >= since_date:
+            for group in change_groups(entry.events):
+                groups[group].append(entry)
+    if args.json:
+        print(json.dumps({group: [entry.as_json() for entry in entries]
+                          for group, entries in groups.items()}, ensure_ascii=False))
+        return 0
+    if not any(groups.values()):
+        print(f"nothing changed since {args.since}")
+    for group, entries in groups.items():
+        if entries:
+            print(f"{group} ({len(entries)})")
+        for entry in entries:
+            commit: Commit = entry.commit
+            print(f"  {commit.date}  {commit.sha[:7]}  {entry.issue_id}  "
+                  f"{selected[entry.issue_id].title}")
     return 0
 
 
@@ -408,15 +439,24 @@ def _descendants(config: Config, everything: list[Issue], issue_id: str) -> list
 MAX_EVENTS_WIDTH = 40
 
 
-def _is_date(text: str) -> bool:
-    """Whether `text` is a YYYY-MM-DD date, rather than a revision."""
-    if not DATE_RE.fullmatch(text):
-        return False
+def _since(config: Config, since: str | None) -> tuple[list[str], str | None]:
+    """A --since value as (git log revision args, date to filter by); refuses where git
+    history can't be read.
+
+    A YYYY-MM-DD date keeps commits authored on or after it: git narrows by commit date
+    from the day before (time zones), and the date filter decides. Anything else is a
+    revision, and keeps the commits after it.
+    """
+    require_history(config.root)
+    if since is None:
+        return [], None
+    if not DATE_RE.fullmatch(since):
+        return [f"{resolve_rev(config.root, since)}..HEAD"], None
     try:
-        datetime.date.fromisoformat(text)
+        day: datetime.date = datetime.date.fromisoformat(since)
     except ValueError:
-        return False
-    return True
+        raise PunchError(f"{since!r} is not a real date") from None
+    return [f"--since={day - datetime.timedelta(days=1)}"], since
 
 
 def _timeline(config: Config, ids: list[str], revs: list[str]) -> list[Entry]:
@@ -432,10 +472,45 @@ def _timeline(config: Config, ids: list[str], revs: list[str]) -> list[Entry]:
             f":(glob){issues_dir}/**/{issue_id}.md",
             f":(glob){issues_dir}/**/{issue_id}/comments/*")
     ])
-    changes: list[tuple[str, Commit, Change]] = [
-        (issue_id, commit, change) for commit in touched for change in commit.changes
+    entries: list[Entry] = _entries(
+        config, touched, lambda path: next((i for i in ids if owns(path, i)), None))
+    # A commit that touched an issue's files is never also `referenced` by it, even when
+    # those changes amount to no event.
+    touching: set[tuple[str, str]] = {
+        (issue_id, commit.sha) for commit in touched for change in commit.changes
         for issue_id in ids if owns(change.path, issue_id) or owns(change.old_path, issue_id)
+    }
+    # git's fixed-string grep narrows the search (several --grep match any); the
+    # configured pattern decides.
+    greps: list[str] = [f"--grep={issue_id.partition('-')[2]}" for issue_id in ids]
+    entries += [
+        Entry(issue_id, commit, (Event("referenced"),))
+        for commit in log(config.root, ["-F", *greps, *revs]) for issue_id in ids
+        if (issue_id, commit.sha) not in touching and mentions(commit, issue_id, config)
     ]
+    return sorted(entries, key=lambda entry: (entry.commit.time, ids.index(entry.issue_id)))
+
+
+def _entries(config: Config, commits: list[Commit],
+             owner: Callable[[str], str | None]) -> list[Entry]:
+    """Each commit's classified events per issue, oldest first; `owner` names the issue a
+    file path belongs to, or None to skip it. A commit whose changes amount to no event
+    (a comment moved with its issue) has no entry."""
+    changes: list[tuple[str, Commit, Change]] = []
+    for commit in commits:
+        for change in commit.changes:
+            new_owner: str | None = owner(change.path)
+            old_owner: str | None = owner(change.old_path)
+            if new_owner == old_owner:
+                if new_owner is not None:
+                    changes.append((new_owner, commit, change))
+                continue
+            # git paired one issue's deleted file with another's new one as a rename: two
+            # issues, so two changes.
+            if old_owner is not None:
+                changes.append((old_owner, commit, Change("D", change.old_path, change.old_path)))
+            if new_owner is not None:
+                changes.append((new_owner, commit, Change("A", change.path, change.path)))
     specs: list[str] = []
     for _id, commit, change in changes:
         specs.append(f"{commit.sha}^:./{change.old_path}" if change.status != "A" else "")
@@ -453,19 +528,9 @@ def _timeline(config: Config, ids: list[str], revs: list[str]) -> list[Entry]:
             bucket.extend(classified)
         else:
             bucket[0:0] = classified
-    entries: list[Entry] = [
-        Entry(issue_id, commit, tuple(events[issue_id, commit.sha]))
-        for commit in touched for issue_id in ids if events.get((issue_id, commit.sha))
-    ]
-    # git's fixed-string grep narrows the search (several --grep match any); the
-    # configured pattern decides.
-    greps: list[str] = [f"--grep={issue_id.partition('-')[2]}" for issue_id in ids]
-    entries += [
-        Entry(issue_id, commit, (Event("referenced"),))
-        for commit in log(config.root, ["-F", *greps, *revs]) for issue_id in ids
-        if (issue_id, commit.sha) not in events and mentions(commit, issue_id, config)
-    ]
-    return sorted(entries, key=lambda entry: (entry.commit.time, ids.index(entry.issue_id)))
+    by_sha: dict[str, Commit] = {commit.sha: commit for commit in commits}
+    return [Entry(issue_id, by_sha[sha], tuple(found_events))
+            for (issue_id, sha), found_events in events.items() if found_events]
 
 
 def cmd_close(args: argparse.Namespace) -> int:
@@ -704,11 +769,18 @@ def _context_lines(text: str) -> int:
     return int(text)
 
 
-def _add_filters(parser: argparse.ArgumentParser) -> None:
-    """The filter and output flags `list` and `search` share; `_select` reads them."""
-    statuses = parser.add_mutually_exclusive_group()
-    statuses.add_argument("--status", help="only this status (default: open)")
-    statuses.add_argument("--all", action="store_true", help="every status")
+def _add_filters(parser: argparse.ArgumentParser, any_status: bool = False) -> None:
+    """The filter flags `list`, `search`, and `changed` share; `_select` reads them.
+
+    `any_status` makes every status the default rather than open, with no --all.
+    """
+    if any_status:
+        parser.add_argument("--status", help="only issues with this status now (default: any)")
+        parser.set_defaults(all=True)
+    else:
+        statuses = parser.add_mutually_exclusive_group()
+        statuses.add_argument("--status", help="only this status (default: open)")
+        statuses.add_argument("--all", action="store_true", help="every status")
     parser.add_argument("--type")
     parser.add_argument("--category")
     parser.add_argument("--priority")
@@ -719,7 +791,6 @@ def _add_filters(parser: argparse.ArgumentParser) -> None:
                            help=f"only issues whose {DEPENDS_ON} issues are all closed")
     readiness.add_argument("--blocked", action="store_true",
                            help=f"only issues waiting on a {DEPENDS_ON} issue that isn't closed")
-    parser.add_argument("--json", action="store_true", help="a JSON array of header fields")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -752,6 +823,7 @@ def build_parser() -> argparse.ArgumentParser:
         "list", help="list open issues: id status type priority category title"
     )
     _add_filters(lst)
+    lst.add_argument("--json", action="store_true", help="a JSON array of header fields")
     lst.set_defaults(func=cmd_list)
 
     search = sub.add_parser(
@@ -767,6 +839,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="under each hit, its matching body lines with line numbers and N lines either side",
     )
     _add_filters(search)
+    search.add_argument("--json", action="store_true", help="a JSON array of header fields")
     search.set_defaults(func=cmd_search)
 
     show = sub.add_parser("show", help="print an issue")
@@ -801,6 +874,20 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--json", action="store_true",
                          help="a JSON array: per commit its sha, date, author, subject, events")
     history.set_defaults(func=cmd_history)
+
+    changed = sub.add_parser(
+        "changed", help="issues created, closed, reopened, or rescoped since a date or revision",
+        description="Read from git: each issue whose file a commit in the range created, "
+                    "closed, reopened, or rescoped (its title or body), grouped by what "
+                    "happened, a line per commit. Filters apply to the issues as they are now.",
+    )
+    changed.add_argument("since", metavar="DATE|REV",
+                         help="a YYYY-MM-DD date (commits on or after it), or a revision "
+                              "(commits after it)")
+    _add_filters(changed, any_status=True)
+    changed.add_argument("--json", action="store_true",
+                         help="a JSON object: per group, records like `history --json` gives")
+    changed.set_defaults(func=cmd_changed)
 
     close = sub.add_parser("close", help="set an issue's status to closed")
     close.add_argument("id", help="an issue id, or any unique start of one")

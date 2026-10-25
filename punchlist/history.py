@@ -159,6 +159,29 @@ def owns(path: str, issue_id: str) -> bool:
         len(parts) >= 3 and parts[-3] == issue_id and parts[-2] == "comments")
 
 
+def issue_of(path: str) -> str | None:
+    """The issue an issues-directory path belongs to: its file's name, or the folder its
+    comments are in; None for anything else."""
+    parts: list[str] = path.split("/")
+    if len(parts) >= 3 and parts[-2] == "comments":
+        return parts[-3]
+    return parts[-1][:-3] if parts[-1].endswith(".md") else None
+
+
+# What `punch changed` reports, in print order. `rescoped` is a title or body change;
+# other events (a priority, a comment) are not a change of scope.
+CHANGE_GROUPS: tuple[str, ...] = ("created", "closed", "reopened", "rescoped")
+
+
+def change_groups(events: tuple[Event, ...]) -> list[str]:
+    """The CHANGE_GROUPS one commit's events for an issue fall in, in CHANGE_GROUPS order."""
+    kinds: set[str] = {
+        "rescoped" if event.kind == "body" or event.field == "title" else event.kind
+        for event in events
+    }
+    return [group for group in CHANGE_GROUPS if group in kinds]
+
+
 def is_comment(path: str) -> bool:
     """Whether `path`, one that `owns` matched, is a comment rather than the issue file."""
     return "/comments/" in f"/{path}"

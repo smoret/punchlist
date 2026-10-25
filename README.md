@@ -36,6 +36,7 @@ punch show 7k3 --comments         # the issue, then its comments oldest first
 punch history 7k3                 # from git: each commit that changed it or mentions it
 punch history 7k3 --since 2026-03-01 --json   # or --since <rev>: only what's newer
 punch history 2x9 --tree --diff   # an epic and everything under it; body changes as diffs
+punch changed 2026-03-01 --type bug   # created/closed/reopened/rescoped since; takes list's filters
 punch set 7k3 priority=high labels=cli,docs   # a list's = replaces the WHOLE list; field= removes
 punch set 7k3 labels+=api rank=2               # += adds to a list, -= removes; one op per field per call
 punch check                       # validate every issue file

@@ -2,7 +2,7 @@
 id: pl-7teva
 title: Issue history: an issue's timeline from git, and what changed in a range
 type: feature
-status: open
+status: closed
 created: 2026-10-25
 ---
 
