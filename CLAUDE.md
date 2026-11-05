@@ -34,7 +34,7 @@ This repo tracks its own work with `punch` (from `.venv`; config in `punchlist.j
 
 | Folder | Holds |
 |---|---|
-| `punchlist/` | The package. CLI entry point is `punchlist/cli.py`, exposed as `punch` (and `punchlist`) |
+| `src/punchlist/` | The package (PyPA src layout: importable only once installed, so tests run against the install). CLI entry point is `src/punchlist/cli.py`, exposed as `punch` (and `punchlist`) |
 | `tests/` | pytest; fixtures build issue roots in `tmp_path`, never in the repo. Shared non-fixture helpers are in `tests/helpers.py` |
 | `tests/fixtures/` | Small synthetic input files (e.g. ROADMAP shapes for the importer) |
 | `docs/` | Durable design notes, one topic per file |
@@ -51,7 +51,7 @@ This repo tracks its own work with `punch` (from `.venv`; config in `punchlist.j
 ## Coding style
 
 - `from __future__ import annotations`; annotate signatures and non-obvious locals.
-- Imports: relative (`from .config import X`) between modules inside `punchlist/`; absolute (`from punchlist.config import X`) in `tests/` and in any tool or script meant to run standalone.
+- Imports: relative (`from .config import X`) between modules inside `src/punchlist/`; absolute (`from punchlist.config import X`) in `tests/` and in any tool or script meant to run standalone.
 - ASCII-only source: `--` not em dashes, `->` not arrows.
 - Stdlib only at runtime. A new runtime dependency needs the user's agreement.
 - Fix lint findings at the root rather than suppressing them.
@@ -63,8 +63,8 @@ This repo tracks its own work with `punch` (from `.venv`; config in `punchlist.j
 ```bash
 python -m pytest tests/test_x.py     # while iterating
 python -m pytest tests/              # before committing
-python -m pylint punchlist
-python -m pyright punchlist
+python -m pylint src/punchlist
+python -m pyright src/punchlist
 punch check                          # the repo's own issues
 ```
 

@@ -26,6 +26,7 @@ punch = "punchlist.cli:main"
 punchlist = "punchlist.cli:main"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["punchlist*"]
 
 [tool.pytest.ini_options]
