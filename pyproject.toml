@@ -9,7 +9,8 @@ description = "A file-based issue tracker: one markdown file per issue, in the p
 authors = [
     { name = "Steven Moret", email = "smoret@gmail.com" },
 ]
-license = "LicenseRef-Proprietary"
+license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []

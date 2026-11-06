@@ -72,3 +72,7 @@ The header is `key: value` lines, values taken verbatim -- no quoting, no YAML. 
 | [issues/](issues/) | Planned work, as punchlist issues |
 | [docs/design.md](docs/design.md) | What was decided and why |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The module map |
+
+## License
+
+MIT; see [LICENSE](LICENSE).
