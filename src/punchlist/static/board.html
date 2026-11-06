@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>punchlist board</title>
+<style>
+:root {
+  --bg: #f6f6f3; --surface: #ffffff; --lane: #ecece7; --text: #1d1d1b; --muted: #6b6b66;
+  --line: #d9d9d2; --accent: #2f6fdb; --danger: #b3261e; --warn-bg: #fff4d6; --warn: #8a5a00;
+  --chip: #eef0f3; --shadow: 0 1px 2px rgba(0,0,0,.08);
+  --l0: #4f8a5b; --l1: #c98a1b; --l2: #2f6fdb; --l3: #8a4fbf; --l4: #c0567b; --l5: #3b9aa8;
+  --closed: #8f8f88;
+  --high: #b3261e; --medium: #a8660b; --low: #4f6f8a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --surface: #222220; --lane: #1c1c1b; --text: #ebebe6; --muted: #a2a29b;
+    --line: #34342f; --accent: #6d9ff0; --danger: #f2827a; --warn-bg: #3a2f12; --warn: #f0c46a;
+    --chip: #2c2e31; --shadow: none;
+    --high: #f2827a; --medium: #e3a94f; --low: #8fb0cc;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161615; --surface: #222220; --lane: #1c1c1b; --text: #ebebe6; --muted: #a2a29b;
+  --line: #34342f; --accent: #6d9ff0; --danger: #f2827a; --warn-bg: #3a2f12; --warn: #f0c46a;
+  --chip: #2c2e31; --shadow: none;
+  --high: #f2827a; --medium: #e3a94f; --low: #8fb0cc;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+button, input, select, textarea { font: inherit; color: inherit; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 16px;
+  border-bottom: 1px solid var(--line); background: var(--surface); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 16px; margin: 0; }
+header .summary { color: var(--muted); }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.filters input, .filters select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); }
+.filters input[type="search"] { width: 200px; }
+main { display: flex; gap: 12px; padding: 16px; overflow-x: auto; align-items: flex-start;
+  min-height: calc(100vh - 60px); }
+.lane { flex: 0 0 290px; background: var(--lane); border-radius: 10px; padding: 10px;
+  border-top: 3px solid var(--stripe, var(--line)); }
+.lane.over { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.lane.collapsed { flex-basis: 170px; }
+.lane h2 { display: flex; align-items: center; gap: 6px; font-size: 13px; margin: 0 0 8px;
+  text-transform: capitalize; }
+.lane h2 .count { color: var(--muted); font-weight: normal; }
+.lane h2 .spacer { flex: 1; }
+.icon { border: 0; background: transparent; cursor: pointer; padding: 2px 6px; border-radius: 4px;
+  color: var(--muted); }
+.icon:hover, .icon:focus-visible { background: var(--surface); color: var(--text); }
+.cards { display: flex; flex-direction: column; gap: 8px; min-height: 24px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; box-shadow: var(--shadow); cursor: grab; text-align: left; width: 100%; }
+.card:focus-visible { outline: 2px solid var(--accent); }
+.card.dragging { opacity: .4; }
+.card .title { font-weight: 600; display: block; margin-bottom: 4px; overflow-wrap: anywhere; }
+.card .note { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; color: var(--muted); font-size: 12px; margin-bottom: 4px; overflow-wrap: anywhere; }
+.lane[data-status="closed"] .card .note { display: none; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px;
+  color: var(--muted); }
+.id { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+.chip { background: var(--chip); border-radius: 999px; padding: 0 7px; font-size: 11px; color: var(--text); }
+.prio-high { color: var(--high); font-weight: 600; }
+.prio-medium { color: var(--medium); font-weight: 600; }
+.prio-low { color: var(--low); }
+.wait { margin-top: 6px; font-size: 12px; background: var(--warn-bg); color: var(--warn);
+  border-radius: 4px; padding: 2px 6px; }
+.marker { height: 3px; border-radius: 2px; background: var(--accent); }
+.empty { color: var(--muted); font-size: 12px; padding: 4px 2px; }
+.quick { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.quick input, .quick select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); }
+.status { margin: 16px; color: var(--muted); }
+#drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 100vw); background: var(--surface);
+  border-left: 1px solid var(--line); box-shadow: -4px 0 16px rgba(0,0,0,.12); overflow-y: auto;
+  padding: 16px 20px 40px; z-index: 5; }
+#drawer[hidden] { display: none; }
+#drawer .head { display: flex; gap: 8px; align-items: flex-start; }
+#drawer .head input { flex: 1; font-size: 18px; font-weight: 600; border: 1px solid transparent;
+  background: transparent; border-radius: 6px; padding: 2px 4px; }
+#drawer .head input:hover, #drawer .head input:focus { border-color: var(--line); }
+.fields { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; margin: 12px 0;
+  align-items: center; }
+.fields label { color: var(--muted); font-size: 12px; }
+.fields select, .fields input { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); width: 100%; }
+.links a { color: var(--accent); cursor: pointer; text-decoration: underline; margin-right: 6px; }
+textarea.body { font-size: 13px; line-height: 1.45; resize: vertical; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row .hint { color: var(--muted); font-size: 12px; }
+.primary:disabled { opacity: .45; cursor: default; }
+h3 { font-size: 13px; margin: 16px 0 6px; color: var(--muted); }
+.comment { border-top: 1px solid var(--line); padding: 8px 0; }
+.comment .who { font-size: 12px; color: var(--muted); }
+.comment .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+textarea { width: 100%; min-height: 70px; padding: 8px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--bg); }
+.primary { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 6px 12px;
+  cursor: pointer; margin-top: 6px; }
+#toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--danger);
+  color: #fff; padding: 8px 14px; border-radius: 8px; max-width: 90vw; z-index: 9; }
+#toast[hidden] { display: none; }
+@media (max-width: 640px) {
+  main { flex-direction: column; align-items: stretch; }
+  .lane, .lane.collapsed { flex-basis: auto; }
+  .filters { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="name">punchlist</h1>
+  <span class="summary" id="summary"></span>
+  <div class="filters">
+    <input type="search" id="q" placeholder="Filter by text or id" aria-label="Filter by text or id">
+    <select id="f-type" aria-label="Type"></select>
+    <select id="f-category" aria-label="Category"></select>
+    <select id="f-label" aria-label="Label"></select>
+  </div>
+</header>
+<p class="status" id="status">Loading&hellip;</p>
+<main id="board" aria-label="Board"></main>
+<aside id="drawer" hidden aria-label="Issue details"></aside>
+<div id="toast" role="alert" hidden></div>
+<script>
+"use strict";
+let data = null;           // the last /api/board reply
+let dragging = null;       // the card being dragged: {id, status}
+let openId = null;         // the issue shown in the drawer
+const expanded = new Set(); // collapsed-by-default lanes the user opened
+const filters = { q: "", type: "", category: "", label: "" };
+
+function el(tag, props, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (k === "text") node.textContent = v;
+    else node.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) if (c != null) node.append(c);
+  return node;
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  const res = await fetch(path, opts);
+  const reply = await res.json().catch(() => ({ error: res.statusText }));
+  if (!res.ok) { const e = new Error(reply.error || res.statusText); e.status = res.status; throw e; }
+  return reply;
+}
+
+function toast(message) {
+  const t = document.getElementById("toast");
+  t.textContent = message; t.hidden = false;
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => { t.hidden = true; }, 6000);
+}
+
+async function load() {
+  try {
+    data = await api("GET", "/api/board");
+    document.getElementById("status").hidden = true;
+    fillFilters(); render();
+  } catch (e) {
+    const s = document.getElementById("status");
+    s.hidden = false; s.textContent = "Couldn't load the board: " + e.message;
+  }
+}
+
+// Another writer (an agent, the CLI, an editor) changed the files: reload, unless mid-drag.
+async function poll() {
+  if (data && !dragging && !document.hidden) {
+    try {
+      const { version } = await api("GET", "/api/version");
+      if (version !== data.version) { await load(); if (openId) refreshDrawer(); }
+    } catch (e) { /* the server is gone; the next poll retries */ }
+  }
+  setTimeout(poll, 2500);
+}
+
+function fillFilters() {
+  const c = data.config;
+  const labels = [...new Set(data.issues.flatMap(i => i.labels || []))].sort();
+  const fill = (id, name, values) => {
+    const s = document.getElementById(id);
+    const keep = s.value;
+    s.replaceChildren(el("option", { value: "", text: "Any " + name }),
+      ...values.map(v => el("option", { value: v, text: v })));
+    s.value = values.includes(keep) ? keep : "";
+    s.hidden = values.length === 0;
+  };
+  fill("f-type", "type", c.types);
+  fill("f-category", "category", c.categories);
+  fill("f-label", "label", labels);
+  document.getElementById("name").textContent = data.name + " board";
+  document.title = data.name + " board";
+}
+
+function visible(issue) {
+  if (filters.type && issue.type !== filters.type) return false;
+  if (filters.category && issue.category !== filters.category) return false;
+  if (filters.label && !(issue.labels || []).includes(filters.label)) return false;
+  if (filters.q) {
+    const q = filters.q.toLowerCase();
+    if (![issue.id, issue.title, issue.body].some(t => (t || "").toLowerCase().includes(q))) return false;
+  }
+  return true;
+}
+
+function laneName(status) { return status.replace(/[-_]/g, " "); }
+
+function render() {
+  const board = document.getElementById("board");
+  const statuses = data.config.statuses;
+  const counts = [];
+  board.replaceChildren(...statuses.map((status, n) => {
+    const all = data.issues.filter(i => i.status === status);
+    const shown = all.filter(visible);
+    counts.push(all.length + " " + laneName(status));
+    const collapsed = status === "closed" && !expanded.has(status);
+    const lane = el("section", { class: "lane" + (collapsed ? " collapsed" : ""), "data-status": status,
+      "aria-label": laneName(status) });
+    lane.style.setProperty("--stripe", status === "closed" ? "var(--closed)" : "var(--l" + (n % 6) + ")");
+    const toggle = status === "closed" ? el("button", { class: "icon", text: collapsed ? "Show" : "Hide",
+      "aria-expanded": String(!collapsed),
+      onclick: () => { collapsed ? expanded.add(status) : expanded.delete(status); render(); } }) : null;
+    const add = status === "closed" ? null : el("button", { class: "icon", text: "+", title: "Add a card",
+      "aria-label": "Add a card to " + laneName(status), onclick: () => quickAdd(lane, status) });
+    lane.append(el("h2", {}, laneName(status),
+      el("span", { class: "count", text: shown.length === all.length ? String(all.length) : shown.length + "/" + all.length }),
+      el("span", { class: "spacer" }), add, toggle));
+    const cards = el("div", { class: "cards" });
+    if (!collapsed) {
+      for (const issue of shown) cards.append(cardEl(issue));
+      if (!shown.length) cards.append(el("div", { class: "empty", text: all.length ? "No matches." : "Nothing here." }));
+    }
+    lane.append(cards);
+    wireDrop(lane, cards, status);
+    return lane;
+  }));
+  document.getElementById("summary").textContent = counts.join(" · ");
+}
+
+// The body's first paragraph, as one line of plain text: what a card says about itself.
+function note(body) {
+  const para = (body || "").split(/\n\s*\n/).map(p => p.trim()).find(Boolean) || "";
+  return para.replace(/^#+\s*/, "").replace(/\s*\n\s*/g, " ");
+}
+
+function cardEl(issue) {
+  const meta = el("div", { class: "meta" },
+    el("span", { class: "id", text: issue.id }),
+    el("span", { text: issue.type }),
+    issue.priority ? el("span", { class: "prio-" + issue.priority, text: issue.priority }) : null,
+    issue.category ? el("span", { class: "chip", text: issue.category }) : null,
+    ...(issue.labels || []).map(l => el("span", { class: "chip", text: "#" + l })),
+    issue.comments ? el("span", { title: issue.comments + " comments", text: "\u{1F4AC} " + issue.comments }) : null);
+  const card = el("button", { class: "card", draggable: "true", "data-id": issue.id,
+    onclick: () => openDrawer(issue.id) },
+    el("span", { class: "title", text: issue.title }),
+    note(issue.body) ? el("span", { class: "note", text: note(issue.body) }) : null, meta,
+    issue.blocked && issue.status !== "closed"
+      ? el("div", { class: "wait", text: "Waiting on " + issue.waiting.join(", ") }) : null);
+  card.addEventListener("dragstart", e => {
+    dragging = { id: issue.id, status: issue.status };
+    e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", issue.id);
+    requestAnimationFrame(() => card.classList.add("dragging"));
+  });
+  card.addEventListener("dragend", () => { dragging = null; card.classList.remove("dragging"); clearMarkers(); });
+  return card;
+}
+
+function clearMarkers() {
+  document.querySelectorAll(".marker").forEach(m => m.remove());
+  document.querySelectorAll(".lane.over").forEach(l => l.classList.remove("over"));
+}
+
+// The card the pointer is above, i.e. the one a drop lands before (null: the end).
+function cardBelow(cards, y) {
+  for (const c of cards.querySelectorAll(".card:not(.dragging)")) {
+    const r = c.getBoundingClientRect();
+    if (y < r.top + r.height / 2) return c;
+  }
+  return null;
+}
+
+function wireDrop(lane, cards, status) {
+  lane.addEventListener("dragover", e => {
+    if (!dragging) return;
+    e.preventDefault();
+    clearMarkers(); lane.classList.add("over");
+    const before = cardBelow(cards, e.clientY);
+    const marker = el("div", { class: "marker" });
+    before ? cards.insertBefore(marker, before) : cards.append(marker);
+  });
+  lane.addEventListener("dragleave", e => { if (!lane.contains(e.relatedTarget)) clearMarkers(); });
+  lane.addEventListener("drop", async e => {
+    e.preventDefault();
+    if (!dragging) return;
+    const before = cardBelow(cards, e.clientY);
+    const moved = dragging;
+    clearMarkers(); dragging = null;
+    await moveCard(moved.id, moved.status, status, before ? before.dataset.id : null);
+  });
+}
+
+async function moveCard(id, from, to, before) {
+  try {
+    await api("POST", "/api/issues/" + id + "/move", { status: to, expect_status: from, before });
+  } catch (e) {
+    toast(e.status === 409 ? "Someone else changed " + id + " first; the board has been refreshed." : e.message);
+  }
+  await load();
+  if (openId === id) refreshDrawer();
+}
+
+function quickAdd(lane, status) {
+  if (lane.querySelector(".quick")) { lane.querySelector(".quick input").focus(); return; }
+  const types = data.config.types;
+  const type = el("select", { "aria-label": "Type" }, ...types.map(t => el("option", { value: t, text: t })));
+  type.value = types.includes("task") ? "task" : types[0];
+  const input = el("input", { placeholder: "Title, then Enter", "aria-label": "New card title" });
+  const form = el("form", { class: "quick", onsubmit: async e => {
+    e.preventDefault();
+    const title = input.value.trim();
+    if (!title) return;
+    try {
+      const { id } = await api("POST", "/api/issues", { title, type: type.value, status });
+      form.remove(); await load(); openDrawer(id);
+    } catch (err) { toast(err.message); }
+  } }, input, type);
+  input.addEventListener("keydown", e => { if (e.key === "Escape") form.remove(); });
+  lane.querySelector("h2").after(form);
+  input.focus();
+}
+
+async function openDrawer(id) { openId = id; await refreshDrawer(); }
+
+function closeDrawer() { openId = null; document.getElementById("drawer").hidden = true; }
+
+async function refreshDrawer() {
+  const drawer = document.getElementById("drawer");
+  if (!openId) return;
+  // Don't throw away what someone is typing.
+  if (!drawer.hidden && drawer.contains(document.activeElement) &&
+      ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+  // An unsaved description survives a redraw, still tied to the body it was based on,
+  // so saving it after someone else's edit is refused rather than overwriting theirs.
+  const old = drawer.querySelector("textarea.body");
+  const pending = old && old.dataset.id === openId && old.value !== old.dataset.base
+    ? { text: old.value, base: old.dataset.base, rebase: old.dataset.rebase === "1" } : null;
+  let issue;
+  try { issue = await api("GET", "/api/issues/" + openId); }
+  catch (e) { toast(e.message); closeDrawer(); return; }
+  const c = data.config;
+  const patch = async (field, value) => {
+    const old = issue[field] == null ? null : (Array.isArray(issue[field]) ? issue[field].join(", ") : issue[field]);
+    try {
+      await api("PATCH", "/api/issues/" + issue.id, { set: { [field]: value }, expect: { [field]: old } });
+    } catch (e) { toast(e.status === 409 ? "Someone else changed " + field + " first; refreshed." : e.message); }
+    await load(); drawer.hidden = true; refreshDrawer();
+  };
+  const choice = (field, values, optional) => {
+    if (!c.fields.includes(field) || (!values.length && !issue[field])) return [];
+    const s = el("select", { id: "d-" + field, onchange: () => patch(field, s.value || null) },
+      optional ? el("option", { value: "", text: "-" }) : null,
+      ...values.map(v => el("option", { value: v, text: v })));
+    s.value = issue[field] || "";
+    return [el("label", { for: "d-" + field, text: field }), s];
+  };
+  const textField = (field, list) => {
+    if (!c.fields.includes(field)) return [];
+    const now = list ? (issue[field] || []).join(", ") : (issue[field] || "");
+    const input = el("input", { id: "d-" + field, value: now });
+    const save = () => {
+      const v = input.value.trim();
+      if (v === now) return;
+      patch(field, list ? (v ? v.split(",").map(s => s.trim()).filter(Boolean) : null) : (v || null));
+    };
+    input.addEventListener("change", save);
+    input.addEventListener("keydown", e => { if (e.key === "Enter") input.blur(); });
+    return [el("label", { for: "d-" + field, text: field }), input];
+  };
+  const links = (label, ids) => ids && ids.length ? [el("label", { text: label }),
+    el("div", { class: "links" }, ...ids.map(i => el("a", { tabindex: "0", text: i,
+      onclick: () => openDrawer(i), onkeydown: e => { if (e.key === "Enter") openDrawer(i); } })))] : [];
+  const title = el("input", { value: issue.title, "aria-label": "Title" });
+  title.addEventListener("change", () => { if (title.value.trim() && title.value.trim() !== issue.title) patch("title", title.value.trim()); });
+  title.addEventListener("keydown", e => { if (e.key === "Enter") title.blur(); });
+  const comment = el("textarea", { placeholder: "Add a comment as " + data.author, "aria-label": "New comment" });
+  const post = el("button", { class: "primary", text: "Comment", onclick: async () => {
+    if (!comment.value.trim()) return;
+    try { await api("POST", "/api/issues/" + issue.id + "/comments", { body: comment.value }); comment.value = ""; }
+    catch (e) { toast(e.message); return; }
+    await load(); comment.blur(); refreshDrawer();
+  } });
+  const lines = (issue.body || "").split("\n").length;
+  const body = el("textarea", { class: "body", rows: String(Math.min(20, Math.max(4, lines + 1))),
+    placeholder: "Describe the work (markdown)", "aria-label": "Description", text: issue.body || "" });
+  body.dataset.id = issue.id;
+  body.dataset.base = issue.body || "";
+  const saveBody = el("button", { class: "primary", text: "Save description", disabled: true,
+    onclick: async () => {
+      try {
+        await api("PATCH", "/api/issues/" + issue.id, { body: body.value, expect_body: body.dataset.base });
+        body.dataset.base = body.value;  // saved: nothing pending to carry over
+      } catch (e) {
+        if (e.status === 409) body.dataset.rebase = "1";
+        toast(e.status === 409
+          ? "Someone else edited the description first. Your text is kept; save again to replace theirs."
+          : e.message);
+      }
+      await load(); body.blur(); refreshDrawer();
+    } });
+  const bodyHint = el("span", { class: "hint" });
+  const markDirty = () => {
+    const dirty = body.value !== body.dataset.base;
+    saveBody.disabled = !dirty;
+    bodyHint.textContent = dirty ? "Unsaved; Ctrl+Enter saves" : "";
+  };
+  body.addEventListener("input", markDirty);
+  if (pending) {
+    body.value = pending.text;
+    // After a refused save the person has been told; their next save replaces what's there now.
+    if (!pending.rebase) body.dataset.base = pending.base;
+    markDirty();
+  }
+  body.addEventListener("keydown", e => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !saveBody.disabled) saveBody.click();
+  });
+  drawer.replaceChildren(
+    el("div", { class: "head" }, title, el("button", { class: "icon", text: "Close", onclick: closeDrawer })),
+    el("div", { class: "meta" }, el("span", { class: "id", text: issue.id }),
+      el("span", { text: "created " + issue.created })),
+    el("div", { class: "fields" },
+      ...choice("status", c.statuses, false), ...choice("type", c.types, false),
+      ...choice("priority", c.priorities, true), ...choice("category", c.categories, true),
+      ...textField("labels", true), ...textField("waiting-on", false),
+      ...links("parent", issue.parent ? [issue.parent] : []),
+      ...links("depends on", issue["depends-on"]), ...links("blocks", issue.blocks),
+      ...links("related", issue.related)),
+    el("h3", { text: "Description" }), body, el("div", { class: "row" }, saveBody, bodyHint),
+    el("h3", { text: "Comments (" + issue.comments.length + ")" }),
+    ...issue.comments.map(cm => el("div", { class: "comment" },
+      el("div", { class: "who", text: cm.author + ", " + cm.created.replace("T", " ").replace("Z", " UTC") }),
+      el("div", { class: "text", text: cm.body }))),
+    comment, post);
+  drawer.hidden = false;
+}
+
+document.addEventListener("keydown", e => { if (e.key === "Escape" && openId && !document.querySelector(".quick")) closeDrawer(); });
+document.getElementById("q").addEventListener("input", e => { filters.q = e.target.value; render(); });
+for (const k of ["type", "category", "label"]) {
+  document.getElementById("f-" + k).addEventListener("change", e => { filters[k] = e.target.value; render(); });
+}
+load().then(poll);
+</script>
+</body>
+</html>

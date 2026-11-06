@@ -29,6 +29,7 @@ This repo tracks its own work with `punch` (from `.venv`; config in `punchlist.j
 - Change header fields with `punch set <id> field=value`; edit an issue's body by hand with the editor. `punch check` validates both.
 - Record progress, findings, or a decision on an issue with `punch comment <id> --author claude --body "..."`. Always pass `--author`: without it the comment falls back to git's user name and is signed as Steve.
 - Read an issue with its comments: `punch show <id> --comments`.
+- Issues and comments are committed and outlive the conversation that wrote them: write about the project, not the people. Say what was decided and why ("decided: writable from the start"), not who asked or who agreed; a user who matters becomes a role ("a first user", "a team tracking a pipeline"). The same goes for docs, examples, and test data.
 
 ## Layout
 

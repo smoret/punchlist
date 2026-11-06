@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from helpers import write_raw
 
-from punchlist import cli
+from punchlist import ops
 from punchlist.check import check_issues
 from punchlist.cli import main
 from punchlist.comment import (
@@ -171,7 +171,7 @@ def in_issue(issue: Config, monkeypatch: pytest.MonkeyPatch) -> Config:
     """`issue`, as the working directory, with no PUNCH_AUTHOR and no git user."""
     monkeypatch.chdir(issue.root)
     monkeypatch.delenv("PUNCH_AUTHOR", raising=False)
-    monkeypatch.setattr(cli, "git_user", lambda _root: None)
+    monkeypatch.setattr(ops, "git_user", lambda _root: None)
     return issue
 
 
@@ -190,7 +190,7 @@ def test_cli_comment_author_flag(in_issue: Config, capsys: pytest.CaptureFixture
 
 def test_cli_author_precedence(in_issue: Config, monkeypatch: pytest.MonkeyPatch,
                                capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(cli, "git_user", lambda _root: "Git User")
+    monkeypatch.setattr(ops, "git_user", lambda _root: "Git User")
     assert _comment(capsys, "aaaaa", "--body", "x").endswith("-git-user.md")
     monkeypatch.setenv("PUNCH_AUTHOR", "env-bot")
     assert _comment(capsys, "aaaaa", "--body", "x").endswith("-env-bot.md")

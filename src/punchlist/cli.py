@@ -12,27 +12,36 @@ import json
 import os
 import re
 import sys
+import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .check import check_issues, dependency_loop, parent_loop
+from .check import check_issues
 from .comment import Comment, load_comments, write_comment
 from .config import (
-    CONFIG_NAME, DEPENDS_ON, LINE_ENDINGS, RELATED, REQUIRED_FIELDS, Config, add_categories,
-    find_root, init_config, load_config,
+    CONFIG_NAME, DEPENDS_ON, LINE_ENDINGS, RELATED, Config, add_categories, find_root,
+    init_config, load_config,
 )
 from .errors import PunchError, display_path
-from .git import Change, Commit, git_user, log, read_blobs, require_history, resolve_rev
+from .git import Change, Commit, log, read_blobs, require_history, resolve_rev
 from .history import (
     CHANGE_GROUPS, Entry, Event, change_groups, classify, is_comment, issue_of, mentions, owns,
 )
-from .ids import new_id, resolve_id
+from .ids import resolve_id
 from .importer import ImportPlan, plan_import
 from .issue import (
-    DATE_RE, FieldValue, Issue, edit_header, format_issue, load_issues, parse_issue, rank_error,
-    read_issue, read_text, update_issue, write_edits, write_issue,
+    DATE_RE, Issue, format_issue, load_issues, parse_issue, read_issue, read_text,
+    update_issue, write_issue,
 )
+from .ops import (
+    Assignment, SetResult, create_issue, is_blocked, json_fields, resolve_author, set_fields,
+    sort_key,
+)
+from .web import BoardServer, make_server
+
+# `serve` listens here unless told otherwise: fixed, so a bookmark keeps working.
+DEFAULT_PORT = 8314
 
 # `list` filters on these scalar fields; each has a flag of the same name.
 FILTER_FIELDS: tuple[str, ...] = ("status", "type", "category", "priority", "parent")
@@ -45,6 +54,11 @@ def _count(n: int, noun: str) -> str:
 
 def _load() -> Config:
     return load_config(find_root(Path.cwd()))
+
+
+def _author(flag: str | None, root: Path) -> str:
+    """--author, else $PUNCH_AUTHOR, else git's user.name (see `resolve_author`)."""
+    return resolve_author(flag, os.environ.get("PUNCH_AUTHOR"), root)
 
 
 def _load_all(config: Config) -> list[Issue]:
@@ -66,82 +80,16 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_new(args: argparse.Namespace) -> int:
     """Create an issue and print its id."""
     config: Config = _load()
-    title: str = args.title.strip()
-    if not title:
-        raise PunchError("title must not be empty")
-    fields: dict[str, str] = {"title": title, "status": "open"}
-    for name in ("type", "priority", "rank", "category"):
+    fields: dict[str, str] = {"title": args.title}
+    for name in ("type", "priority", "rank", "category", "parent"):
         value: str | None = getattr(args, name)
         if value is not None:
             fields[name] = value
-    if args.parent is not None:
-        fields["parent"] = resolve_id(config, args.parent)
-    # Checked before writing so the error names the flag, not a file never written.
-    for name, value in fields.items():
-        if name not in config.fields:
-            raise PunchError(f"{name} is not a field in the config")
-        error: str | None = config.choice_error(name, value)
-        if error is None and name == "rank":
-            error = rank_error(value)
-        if error is not None:
-            raise PunchError(error)
-    fields["created"] = datetime.date.today().isoformat()
-    fields["id"] = new_id(config)
-    issue_fields: dict[str, FieldValue] = dict(fields)
-    if args.label:
-        if "labels" not in config.list_fields:
-            raise PunchError("labels is not a list field in the config")
-        labels: list[str] = [item.strip() for label in args.label for item in label.split(",")]
-        if not all(labels):
-            raise PunchError("empty label")
-        issue_fields["labels"] = labels
-    if args.depends_on:
-        # A new issue can't close a loop: nothing depends on it yet.
-        issue_fields[DEPENDS_ON] = _link_ids(config, DEPENDS_ON, args.depends_on)
-    partners: list[tuple[str, Path, str]] = []
-    if args.related:
-        related: list[str] = _link_ids(config, RELATED, args.related)
-        issue_fields[RELATED] = related
-        partners = _partner_edits(config, fields["id"], [], related)
-    issue = Issue(issue_fields, _read_body(args))
-    write_issue(issue, config, create=True)
-    write_edits([(path, text) for _other, path, text in partners], config)
+    issue, _partners = create_issue(config, fields, labels=args.label,
+                                    depends_on=args.depends_on, related=args.related,
+                                    body=_read_body(args))
     print(issue.id)
     return 0
-
-
-def _link_ids(config: Config, field: str, values: list[str]) -> list[str]:
-    """A link field's comma-separated ids (short ids allowed) -> full ids, in order, no repeats."""
-    if field not in config.fields:
-        raise PunchError(f"{field} is not a field in the config")
-    texts: list[str] = [item.strip() for value in values for item in value.split(",")]
-    if not all(texts):
-        raise PunchError(f"empty item in {field}")
-    return list(dict.fromkeys(resolve_id(config, text) for text in texts))
-
-
-def _partner_edits(config: Config, issue_id: str, old: list[str],
-                   new: list[str]) -> list[tuple[str, Path, str]]:
-    """The other side of a related-link change: (partner id, its path, its new text).
-
-    Each newly related issue gains `issue_id`; each one no longer related loses
-    it. Partners already in the right state are left out. Computed (and
-    validated) before anything is written.
-    """
-    edits: list[tuple[str, Path, str]] = []
-    for other in [o for o in new if o not in old] + [o for o in old if o not in new]:
-        path: Path = config.issue_path(other)
-        if not path.is_file():
-            continue  # a dangling id being removed; check reports dangling ones
-        items: list[str] = read_issue(path, config).items(RELATED)
-        if other in new and issue_id not in items:
-            value: str | None = ", ".join([*items, issue_id])
-        elif other not in new and issue_id in items:
-            value = ", ".join(i for i in items if i != issue_id) or None
-        else:
-            continue
-        edits.append((other, path, edit_header(read_text(path), config, path, {RELATED: value})))
-    return edits
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -215,7 +163,7 @@ def _clip(line: str, pattern: re.Pattern[str]) -> str:
 
 def _select(config: Config, issues: list[Issue], args: argparse.Namespace,
             everything: list[Issue]) -> list[Issue]:
-    """The `issues` passing the filter flags, sorted by `_sort_key`.
+    """The `issues` passing the filter flags, sorted by `sort_key`.
 
     `everything` is every issue in the tracker, for --ready and --blocked to
     look up dependencies that aren't themselves among `issues`.
@@ -229,15 +177,17 @@ def _select(config: Config, issues: list[Issue], args: argparse.Namespace,
         if error is not None:
             raise PunchError(error)
         wanted[name] = resolve_id(config, value) if name == "parent" else value
-    if "status" not in wanted and not args.all:
-        wanted["status"] = "open"
+    # Without --status or --all, everything still in play: a workflow status a tracker adds
+    # (`progress`, say) is as open as `open`.
+    unfinished: bool = "status" not in wanted and not args.all
     labels: list[str] = args.label or []
     if labels and "labels" not in config.list_fields:
         raise PunchError("labels is not a list field in the config")
 
     matches: list[Issue] = [
         issue for issue in issues
-        if all(issue.text(name) == value for name, value in wanted.items())
+        if not (unfinished and issue.status == "closed")
+        and all(issue.text(name) == value for name, value in wanted.items())
         and all(label in issue.items("labels") for label in labels)
     ]
     if args.ready or args.blocked:
@@ -245,22 +195,9 @@ def _select(config: Config, issues: list[Issue], args: argparse.Namespace,
             raise PunchError(f"--ready and --blocked need a {DEPENDS_ON} field in the config")
         statuses: dict[str, str] = {issue.id: issue.status for issue in everything}
         matches = [issue for issue in matches
-                   if _is_blocked(issue, statuses) == bool(args.blocked)]
-    matches.sort(key=lambda issue: _sort_key(config, issue))
+                   if is_blocked(issue, statuses) == bool(args.blocked)]
+    matches.sort(key=lambda issue: sort_key(config, issue))
     return matches
-
-
-def _is_blocked(issue: Issue, statuses: dict[str, str]) -> bool:
-    """Whether any dependency isn't closed; a missing one counts, since it can't be done."""
-    return any(statuses.get(dependency) != "closed" for dependency in issue.items(DEPENDS_ON))
-
-
-def _sort_key(config: Config, issue: Issue) -> tuple[int, bool, float, str, str]:
-    """Priority in config order, then rank, then created, then id; missing values sort last."""
-    priority: str | None = issue.text("priority")
-    level: int = config.priorities.index(priority) if priority else len(config.priorities)
-    rank: float | None = issue.rank
-    return (level, rank is None, rank or 0.0, issue.text("created") or "", issue.id)
 
 
 def _print_issues(config: Config, issues: list[Issue], as_json: bool,
@@ -274,7 +211,7 @@ def _print_issues(config: Config, issues: list[Issue], as_json: bool,
     if as_json:
         rows: list[dict[str, object]] = []
         for issue in issues:
-            row: dict[str, object] = dict(_json_fields(issue, config))
+            row: dict[str, object] = dict(json_fields(issue, config))
             if snippets is not None:
                 row["matches"] = [
                     {"line": s.line, "text": s.text, "match": s.match} for s in snippets[issue.id]
@@ -304,7 +241,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     issue: Issue = parse_issue(text, config, path)
     comments: list[Comment] = load_comments(config, issue_id) if args.comments else []
     if args.json:
-        row: dict[str, object] = {**_json_fields(issue, config), "body": issue.body}
+        row: dict[str, object] = {**json_fields(issue, config), "body": issue.body}
         if config.has_links:
             # Derived, never stored: the issues listing this one in depends-on.
             row["blocks"] = sorted(
@@ -337,16 +274,6 @@ def cmd_comment(args: argparse.Namespace) -> int:
                                datetime.datetime.now(datetime.timezone.utc))
     print(display_path(path, Path.cwd().resolve()))
     return 0
-
-
-def _author(flag: str | None, root: Path) -> str:
-    """--author, else $PUNCH_AUTHOR, else git's user.name; an error if none is set."""
-    author: str = (flag or os.environ.get("PUNCH_AUTHOR") or git_user(root) or "").strip()
-    if not author:
-        raise PunchError("no author: pass --author, set PUNCH_AUTHOR, or set git's user.name")
-    if "\n" in author or "\r" in author:
-        raise PunchError("author must be a single line")
-    return author
 
 
 def cmd_history(args: argparse.Namespace) -> int:
@@ -415,7 +342,7 @@ def cmd_changed(args: argparse.Namespace) -> int:
 
 def _descendants(config: Config, everything: list[Issue], issue_id: str) -> list[Issue]:
     """Every issue under `issue_id` by parent links, depth first, each issue's children in
-    `_sort_key` order; a parent loop ends where it comes back round."""
+    `sort_key` order; a parent loop ends where it comes back round."""
     children: dict[str, list[Issue]] = {}
     for issue in everything:
         parent: str | None = issue.text("parent")
@@ -425,7 +352,7 @@ def _descendants(config: Config, everything: list[Issue], issue_id: str) -> list
     seen: set[str] = {issue_id}
 
     def visit(parent: str) -> None:
-        for child in sorted(children.get(parent, []), key=lambda i: _sort_key(config, i)):
+        for child in sorted(children.get(parent, []), key=lambda i: sort_key(config, i)):
             if child.id not in seen:
                 seen.add(child.id)
                 found.append(child)
@@ -564,10 +491,7 @@ def cmd_set(args: argparse.Namespace) -> int:
     remove an optional field, and `field+=a,b` / `field-=a` to add to or remove from a list."""
     config: Config = _load()
     issue_id: str = resolve_id(config, args.id)
-    path: Path = config.issue_path(issue_id)
-    issue: Issue = read_issue(path, config)
-    # Everything is validated before writing, so an error names the argument.
-    changes: dict[str, str | None] = {}
+    assignments: list[Assignment] = []
     for assignment in args.assignments:
         name, sep, raw = assignment.partition("=")
         name, op = name.strip(), ""
@@ -575,110 +499,20 @@ def cmd_set(args: argparse.Namespace) -> int:
             name, op = name[:-1].strip(), name[-1]
         if not sep:
             raise PunchError(f"expected field=value, got {assignment!r}")
-        if name in changes:
-            raise PunchError(f"{name} is set twice")
-        if name not in config.fields:
-            raise PunchError(f"{name} is not a field in the config")
-        if name == "id":
-            raise PunchError("id cannot be changed; it names the file")
-        value: str = raw.strip()
-        if op:
-            value = _list_after(config, issue, name, op, value)
-        changes[name] = _set_value(config, issue_id, name, value)
-
-    changed: list[str] = [
-        name for name, value in changes.items() if _field_text(issue, name) != value
-    ]
-    if not changed:
+        assignments.append((name, op, raw))
+    result: SetResult = set_fields(config, issue_id, assignments)
+    if not result.changed:
         print(f"{issue_id} unchanged")
         return 0
-    # Compute every file's new text first: a related change also edits partners,
-    # and a bad partner must stop the whole change before anything is written.
-    text: str = edit_header(read_text(path), config, path, {n: changes[n] for n in changed})
-    partners: list[tuple[str, Path, str]] = []
-    if RELATED in changed:
-        new: str | None = changes[RELATED]
-        partners = _partner_edits(config, issue_id, issue.items(RELATED),
-                                  new.split(", ") if new else [])
-    write_edits([(path, text), *((p, t) for _o, p, t in partners)], config)
     # A list's `=` replaces it, so say what went: a dropped link is easy to miss.
-    notes: list[str] = []
-    for name in changed:
-        if name in config.list_fields:
-            kept: str | None = changes[name]
-            removed: list[str] = [i for i in issue.items(name)
-                                  if i not in (kept.split(", ") if kept else [])]
-            notes.append(f"{name} (removed {', '.join(removed)})" if removed else name)
-        else:
-            notes.append(name)
+    notes: list[str] = [
+        f"{name} (removed {', '.join(removed)})" if removed else name
+        for name, removed in result.changed
+    ]
     print(f"updated {issue_id}: {', '.join(notes)}")
-    for other, _path, _text in partners:
+    for other in result.partners:
         print(f"updated {other}: {RELATED}")
     return 0
-
-
-def _list_after(config: Config, issue: Issue, name: str, op: str, value: str) -> str:
-    """The whole list `field+=value` or `field-=value` leaves, as `=` would take it.
-
-    Adding an id already there or removing one that isn't changes nothing, so a
-    retry is safe. `-=` matches a stored id exactly before resolving it, so a
-    link to a deleted issue can still be removed.
-    """
-    if name not in config.list_fields:
-        raise PunchError(f"{name}{op}= only works on list fields")
-    current: list[str] = issue.items(name)
-    texts: list[str] = [item.strip() for item in value.split(",")]
-    if not all(texts):
-        raise PunchError(f"empty item in {name}{op}=")
-    links: bool = name in (DEPENDS_ON, RELATED)
-    if op == "+":
-        added: list[str] = _link_ids(config, name, texts) if links else texts
-        return ", ".join(dict.fromkeys([*current, *added]))
-    gone: set[str] = {
-        text if text in current or not links else resolve_id(config, text) for text in texts
-    }
-    return ", ".join(item for item in current if item not in gone)
-
-
-def _set_value(config: Config, issue_id: str, name: str, value: str) -> str | None:
-    """The header text `punch set` writes for one assignment; None removes the field."""
-    if not value:
-        if name in REQUIRED_FIELDS:
-            raise PunchError(f"{name} is required and cannot be removed")
-        return None
-    if name == DEPENDS_ON:
-        dependencies: list[str] = _link_ids(config, DEPENDS_ON, [value])
-        cycle: list[str] | None = dependency_loop(config, issue_id, dependencies)
-        if cycle is not None:
-            raise PunchError(f"dependency loop: {' -> '.join(cycle)}")
-        return ", ".join(dependencies)
-    if name == RELATED:
-        related: list[str] = _link_ids(config, RELATED, [value])
-        if issue_id in related:
-            raise PunchError(f"{issue_id} can't be related to itself")
-        return ", ".join(related)
-    if name in config.list_fields:
-        items: list[str] = [item.strip() for item in value.split(",")]
-        if not all(items):
-            raise PunchError(f"empty item in {name}")
-        return ", ".join(items)
-    error: str | None = config.choice_error(name, value)
-    if error is None and name == "rank":
-        error = rank_error(value)
-    if error is not None:
-        raise PunchError(error)
-    if name == "parent":
-        value = resolve_id(config, value)
-        loop: list[str] | None = parent_loop(config, issue_id, value)
-        if loop is not None:
-            raise PunchError(f"parent loop: {' -> '.join(loop)}")
-    return value
-
-
-def _field_text(issue: Issue, name: str) -> str | None:
-    """A field as its header text (list fields joined), or None if absent."""
-    value: FieldValue | None = issue.fields.get(name)
-    return ", ".join(value) if isinstance(value, list) else value
 
 
 def cmd_check(args: argparse.Namespace) -> int:
@@ -690,6 +524,30 @@ def cmd_check(args: argparse.Namespace) -> int:
     if problems:
         return 1
     print(f"{_count(count, 'issue')} ok")
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Serve the kanban board on this machine until interrupted."""
+    config: Config = _load()
+    # Resolved now, not at the first comment: a board that can't sign comments says so
+    # before it opens.
+    author: str = _author(args.author, config.root)
+    try:
+        server: BoardServer = make_server(config.root, author, port=args.port)
+    except OSError as exc:
+        raise PunchError(f"cannot listen on port {args.port}: {exc.strerror} "
+                         "(pass --port to pick another, 0 for any free one)") from None
+    print(f"serving {display_path(config.root)} at {server.url} as {author}; Ctrl+C stops",
+          flush=True)
+    if not args.no_browser:
+        webbrowser.open(server.url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
     return 0
 
 
@@ -738,11 +596,6 @@ def cmd_import_md(args: argparse.Namespace) -> int:
     return 0
 
 
-def _json_fields(issue: Issue, config: Config) -> dict[str, FieldValue]:
-    """An issue's header fields in config order, for --json output."""
-    return {name: issue.fields[name] for name in config.fields if name in issue.fields}
-
-
 def _read_body(args: argparse.Namespace) -> str:
     """The body from --body or --body-file (`-` for stdin), trimmed of blank edges."""
     text: str
@@ -772,14 +625,14 @@ def _context_lines(text: str) -> int:
 def _add_filters(parser: argparse.ArgumentParser, any_status: bool = False) -> None:
     """The filter flags `list`, `search`, and `changed` share; `_select` reads them.
 
-    `any_status` makes every status the default rather than open, with no --all.
+    `any_status` makes every status the default rather than all but closed, with no --all.
     """
     if any_status:
         parser.add_argument("--status", help="only issues with this status now (default: any)")
         parser.set_defaults(all=True)
     else:
         statuses = parser.add_mutually_exclusive_group()
-        statuses.add_argument("--status", help="only this status (default: open)")
+        statuses.add_argument("--status", help="only this status (default: any but closed)")
         statuses.add_argument("--all", action="store_true", help="every status")
     parser.add_argument("--type")
     parser.add_argument("--category")
@@ -822,14 +675,14 @@ def build_parser() -> argparse.ArgumentParser:
     new.set_defaults(func=cmd_new)
 
     lst = sub.add_parser(
-        "list", help="list open issues: id status type priority category title"
+        "list", help="list unclosed issues: id status type priority category title"
     )
     _add_filters(lst)
     lst.add_argument("--json", action="store_true", help="a JSON array of header fields")
     lst.set_defaults(func=cmd_list)
 
     search = sub.add_parser(
-        "search", help="list open issues whose title or body matches a regex"
+        "search", help="list unclosed issues whose title or body matches a regex"
     )
     search.add_argument(
         "pattern",
@@ -917,6 +770,20 @@ def build_parser() -> argparse.ArgumentParser:
              "sets check_references)",
     )
     check.set_defaults(func=cmd_check)
+
+    serve = sub.add_parser(
+        "serve", help="a kanban board of the issues in your browser, on this machine only",
+        description="Serves a board at http://127.0.0.1:PORT/: a lane per status in config "
+                    "order, cards ordered by priority then rank. Changes are written to the "
+                    "issue files like `punch set`; nothing is committed.",
+    )
+    serve.add_argument("--port", type=int, default=DEFAULT_PORT,
+                       help=f"port to listen on (default: {DEFAULT_PORT}; 0 picks a free one)")
+    serve.add_argument("--author",
+                       help="who the board's comments are by (default: $PUNCH_AUTHOR, then "
+                            "git's user.name)")
+    serve.add_argument("--no-browser", action="store_true", help="don't open a browser")
+    serve.set_defaults(func=cmd_serve)
 
     imp = sub.add_parser("import-md", help="import a markdown roadmap's checklist as issues")
     imp.add_argument("file")

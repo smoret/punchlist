@@ -214,6 +214,21 @@ def test_list_open_sorted_by_priority(sample: Config, capsys: pytest.CaptureFixt
     assert _list(capsys) == ["pl-high1", "pl-epic1", "pl-low01", "pl-none1"]
 
 
+def test_list_default_includes_every_status_but_closed(
+        in_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    data = default_config("pl")
+    data["statuses"] = ["open", "progress", "closed"]
+    (in_root / CONFIG_NAME).write_text(json.dumps(data), encoding="utf-8")
+    config: Config = load_config(in_root)
+    _make(config, "pl-open1", "Open")
+    _make(config, "pl-prog1", "Moving", status="progress")
+    _make(config, "pl-done1", "Done", status="closed")
+    assert _list(capsys) == ["pl-open1", "pl-prog1"]
+    assert _list(capsys, "--status", "progress") == ["pl-prog1"]
+    assert main(["search", "o", "--json"]) == 0
+    assert [row["id"] for row in json.loads(capsys.readouterr().out)] == ["pl-open1", "pl-prog1"]
+
+
 def test_list_sorts_by_created_within_priority(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
     _make(sample, "pl-none0", "Newer, no priority", created="2026-02-01")
     assert _list(capsys, "--priority", "high", "--all")[0] == "pl-done1"

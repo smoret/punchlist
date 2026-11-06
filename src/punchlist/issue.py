@@ -250,6 +250,21 @@ def edit_header(text: str, config: Config, path: Path, changes: dict[str, str | 
     return result
 
 
+def edit_body(text: str, config: Config, path: Path, body: str) -> str:
+    """`text` with its body replaced by `body`, every header byte kept.
+
+    `body` is stored as given: "" for none, else text ending in a newline. The
+    result is parsed, so a corrupt header is still an error rather than rewritten.
+    """
+    if body and not body.endswith("\n"):
+        raise PunchError("body must end with a newline", path)
+    header: Header = split_header(text, path)
+    head: str = "\n".join(text.split("\n")[:header.close_line]) + "\n"
+    result: str = head + "\n" + body if body else head
+    parse_issue(result, config, path)
+    return result
+
+
 def update_issue(path: Path, config: Config, changes: dict[str, str | None]) -> None:
     """Apply `changes` to an issue file's header in place (see edit_header)."""
     write_file(path, edit_header(read_text(path), config, path, changes), config.newline)

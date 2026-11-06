@@ -16,7 +16,7 @@ The deciding requirement: **issue changes are files in the project's own git rep
 ## Principles
 
 - **Small and incremental.** Build the next feature when a real use asks for it.
-- **Agents are the primary user.** CLI first, terse one-line-per-issue output, `--json` where structured output helps. A web UI is a maybe-later.
+- **Agents are the primary user.** CLI first, terse one-line-per-issue output, `--json` where structured output helps. The web board (`punch serve`) is for the human on the team, over the same files.
 - **Stdlib only at runtime.** Python >= 3.11. Dev dependencies: pytest, pylint, pyright.
 - **Fail closed.** A malformed file is an error naming the file and line, never a silently skipped or half-read issue. A wrong issue is worse than a refused one.
 - **Files are the database.** No index, cache, or sidecar state; every command reads the files.
@@ -39,7 +39,7 @@ The deciding requirement: **issue changes are files in the project's own git rep
 - Buckets had to land before the first real import: moving files later would put a rename of every issue into history. Changing `fanout` on an existing project has the same cost, so `check` treats a file in the wrong bucket as an error rather than quietly following it.
 - One function maps an id to its path (`Config.issue_path`); nothing else builds issue paths. Short-id lookup searches every bucket.
 - Status is a field, not a folder, for the same reason.
-- Closed issues stay on disk with `status: closed`; `list` shows open ones by default.
+- Closed issues stay on disk with `status: closed`; `list` and `search` show every other status by default.
 - Files are UTF-8. By default they are written with the platform's line endings, so a Windows checkout under `core.autocrlf` sees no churn; a repository that fixes its endings on disk (`.gitattributes` `eol=lf`) sets `line_endings` to match (see Config). Reads accept either.
 
 ## Issue file format
@@ -115,7 +115,7 @@ Everything enumerable is config, so new categories, types, or priorities need no
 - The enumerated fields are `type`, `status`, `priority`, and `category`, validated against `types`, `statuses`, `priorities`, and `categories`. None of them may be a list field.
 - `priorities` is ordered highest first, so sorting works.
 - `rank` is an ordinary entry in `fields`, so a config written before it existed has no rank until `"rank"` is added there by hand; until then `set rank=` is refused as an unknown field. It may not be a list field.
-- `statuses` must include `open` and `closed`, which the commands rely on.
+- `statuses` must include `open` and `closed`, which the commands rely on: `new` writes `open`, and `closed` is what `close` writes, what satisfies a dependency, and the one status `list` hides by default. Statuses between them are workflow states (`progress`, `review`) and count as unfinished everywhere. Their order is the board's lane order (see Web UI).
 - `categories` may be empty, in which case any `category:` value is an error.
 - `line_endings` is `platform` (CRLF on Windows, LF elsewhere), `lf`, or `crlf`, and applies to every file punch writes: issues, comments, and `punchlist.json` itself. `punch init --line-endings lf` sets it, so even the first file is written in it. There is no "keep each file's existing endings" choice: a new issue or comment has no file to copy from, so it would still need one of these as a fallback, and a fixed choice already matches a repository's `.gitattributes`.
 
@@ -185,6 +185,20 @@ pl-7k3qx closed task high - Retry should back off on timeouts
 - `--tree` adds every issue under it by `parent`, at any depth, as of today's links: the issues are listed depth first, and each timeline line names its issue after the sha. One commit that touched several of them is a line per issue. It is an epic's progress at a glance, and it costs the same three git calls as one issue.
 - `punch changed <date|rev>` asks the reverse question over a range: which issues were `created`, `closed`, `reopened`, or `rescoped` (title or body changed), grouped in that order, a line per commit -- `date sha id title`. The standup and release-notes view. Other events (a priority, a comment) aren't a change of scope and don't appear. It takes `list`'s filters, applied to the issues as they are now, with every status by default; so an issue deleted since isn't listed. `--json` is an object of the four groups, each an array of the same records `history --json` gives. When git pairs one issue's deleted file with another's new one as a rename, they are reported as the two issues they are.
 - Outside a git repository, or in a shallow clone, both refuse rather than print a short timeline. It costs a fixed number of git calls however long the history: two `git log`s and one `git cat-file --batch` for every file version.
+
+## Web UI
+
+`punch serve` is a kanban board for the human on a team of agents: the agents keep using the CLI, and the person sees and moves the same files in a browser. It was built for a pipeline whose pieces are hard to keep track of in a terminal, after Jira was judged too heavy (too many fields) and a claude.ai artifact board kept its cards outside the repo.
+
+- **Lanes are `statuses`**, in config order. A tracker adds workflow states (`"statuses": ["open", "decision", "progress", "closed"]`) and gets a lane for each; nothing else configures the board. `closed` is collapsed until opened, since closed issues accumulate.
+- **Cards** show the title, the body's first paragraph (clipped to two lines; hidden in `closed`), the id, type, priority, category, labels, comment count, and -- when a `depends-on` issue isn't closed -- "Waiting on" with its ids. A free-text wait ("the lead's call on blend width") is a custom header field such as `waiting-on`; the board edits it when the config lists it.
+- **Order within a lane is `sort_key`**, the same as `list`: priority, then rank. Dragging a card sets its status and a `rank` between its new neighbors of the same priority, so one file changes; a drop among another priority's cards lands at the nearest place in its own, because changing a priority by dragging would be a surprise. When the card above has no rank (or the two neighbors tie), nothing fits between, so that priority's cards in the lane are renumbered 1, 2, 3, .... Ranks are computed as decimals, never floats, so they stay plain (`1.5`, `0.15`).
+- **Every write goes through `ops`**, the code behind `new` and `set`, so the board can't write what `punch check` would reject. The page also edits title, type, priority, category, labels, and the body, and adds comments and new cards (into the lane they're added in). A body edit replaces only the text after the header (`ops.set_body`), so the header lines stay byte for byte; blank edges are trimmed as for `new --body`.
+- **Concurrent edits.** Each request reads the files; there is no server-side state. The page polls a fingerprint of the issue files (path, size, mtime) every few seconds and redraws when it changes, so an agent's `punch set` shows up without a reload. A move or field edit carries the value the page saw; if the file has changed since, the server answers 409 and writes nothing, and the page redraws instead of overwriting the agent. An unsaved description survives a redraw; after a refused save the page says so and keeps the text, and a second save replaces the other version -- a choice the person makes knowingly.
+- **No git.** The board writes files, like the CLI, and never commits: issues may live in a folder that isn't a repository yet. Committing stays with whoever finishes the work, in the same commit as the work.
+- **Local only.** It binds 127.0.0.1 and has no accounts. Shared issues are shared through the repository: each person clones it and runs their own `punch serve`. It refuses a request naming another host (DNS rebinding) and a write without a JSON content type (a cross-site form), so a web page can't drive it.
+- **The author** of the board's comments is resolved at startup (`--author`, `$PUNCH_AUTHOR`, git's `user.name`), so a board that couldn't sign a comment refuses to start rather than failing at the first one.
+- **Stdlib only.** `http.server` and one static HTML file with plain JavaScript; no framework, no build step, nothing fetched from the network.
 
 ## Importing a markdown roadmap
 

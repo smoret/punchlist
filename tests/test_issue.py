@@ -9,7 +9,7 @@ import pytest
 from punchlist.config import Config
 from punchlist.errors import PunchError
 from punchlist.issue import (
-    Issue, edit_header, format_issue, parse_issue, read_issue, write_issue,
+    Issue, edit_body, edit_header, format_issue, parse_issue, read_issue, write_issue,
 )
 
 SAMPLE = """\
@@ -185,6 +185,27 @@ def test_edit_header_removes(config: Config) -> None:
 def test_edit_header_rejects(config: Config, changes: dict[str, str | None], message: str) -> None:
     with pytest.raises(PunchError, match=message):
         edit_header(_header(*BASE), config, PATH, changes)
+
+
+def test_edit_body_keeps_the_header_bytes(config: Config) -> None:
+    # A hand-edited header (fields out of config order) survives untouched.
+    head = "---\ncreated: 2026-10-18\nstatus: open\nid: pl-aaaaa\ntitle: T\ntype: bug\n---\n"
+    assert edit_body(head + "\nold\n", config, PATH, "new\n\n---\nlooks like a header\n") == (
+        head + "\nnew\n\n---\nlooks like a header\n")
+    assert edit_body(head + "\nold\n", config, PATH, "") == head
+    assert edit_body(head, config, PATH, "first\n") == head + "\nfirst\n"
+    assert edit_body(SAMPLE, config, PATH, "Reasons.\n") == (
+        SAMPLE[:SAMPLE.index("\nFree-form")] + "\nReasons.\n")
+
+
+@pytest.mark.parametrize(("text", "body", "message"), [
+    (_header(*BASE), "no newline", "body must end with a newline"),
+    (_header(*BASE, "priority: urgent"), "x\n", "priority 'urgent'"),
+    ("id: pl-aaaaa\n", "x\n", "first line must be '---'"),
+])
+def test_edit_body_rejects(config: Config, text: str, body: str, message: str) -> None:
+    with pytest.raises(PunchError, match=message):
+        edit_body(text, config, PATH, body)
 
 
 def test_value_kept_verbatim(config: Config) -> None:

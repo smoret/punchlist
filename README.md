@@ -20,7 +20,7 @@ punch init --prefix pl --line-endings lf   # write every file LF (default: the p
 punch new "Title" --type task --category tooling   # prints the new id
 punch new "Title" --type task --priority high --rank 2.5   # rank orders within a priority
 punch new "Title" --type bug --body-file -         # body from stdin
-punch list                        # open issues: id status type priority category title
+punch list                        # every status but closed: id status type priority category title
 punch list --all --label cli --json
 punch list --ready                # open issues whose depends-on issues are all closed
 punch set 7k3 depends-on+=2x9     # 7k3 also waits on 2x9; --blocked lists what's waiting
@@ -40,6 +40,8 @@ punch history 2x9 --tree --diff   # an epic and everything under it; body change
 punch changed 2026-03-01 --type bug   # created/closed/reopened/rescoped since; takes list's filters
 punch set 7k3 priority=high labels=cli,docs   # a list's = replaces the WHOLE list; field= removes
 punch set 7k3 labels+=api rank=2               # += adds to a list, -= removes; one op per field per call
+punch serve                       # kanban board at http://127.0.0.1:8314/, a lane per status
+punch serve --author alex --port 0 --no-browser    # any free port; comments signed alex
 punch check                       # validate every issue file
 punch check --references          # also flag ids mentioned in bodies that don't exist
 punch import-md ROADMAP.md --dry-run   # what a markdown checklist would become
