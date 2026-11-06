@@ -20,4 +20,4 @@ see no change. An option that keeps an edited file's existing line endings may a
 considering.
 
 Requested by a downstream project, which uses LF on disk on Windows and seeded its first ten
-issues with punch 0.3.0 (317b591).
+issues with punch 0.3.0 (17dd79a).
