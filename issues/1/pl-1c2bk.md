@@ -2,7 +2,7 @@
 id: pl-1c2bk
 title: test_history_diff fails intermittently
 type: bug
-status: open
+status: closed
 priority: low
 related: pl-nmsgn
 created: 2026-11-05

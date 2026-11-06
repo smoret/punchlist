@@ -220,7 +220,8 @@ def test_history_diff(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     issue_id: str = _run(capsys, "new", "Thing", "--type", "task", "--body", "a\nb\nc").strip()
     commit(repo, "Add")
     path: Path = repo / "issues" / issue_id[3] / f"{issue_id}.md"
-    path.write_text(path.read_text(encoding="utf-8").replace("b\n", "B\n"), encoding="utf-8")
+    # The whole line: a bare "b\n" also matches the id line whenever the random id ends in b.
+    path.write_text(path.read_text(encoding="utf-8").replace("\nb\n", "\nB\n"), encoding="utf-8")
     _run(capsys, "set", issue_id, "priority=low")
     sha: str = commit(repo, "Edit", "2026-03-03T12:00:00")
     lines: list[str] = _run(capsys, "history", issue_id, "--diff").splitlines()
