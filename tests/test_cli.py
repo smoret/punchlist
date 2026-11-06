@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import io
 import json
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,13 @@ from helpers import write_raw
 from punchlist.cli import main
 from punchlist.config import CONFIG_NAME, Config, default_config, load_config
 from punchlist.issue import FieldValue, Issue, read_issue, write_issue
+
+
+def test_version_prints_installed_version(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--version"])
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out == f"punch {version('punchlist')}\n"
 
 
 def test_init_writes_loadable_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,

@@ -15,6 +15,7 @@ import sys
 import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
 
 from .check import check_issues
@@ -649,7 +650,8 @@ def _add_filters(parser: argparse.ArgumentParser, any_status: bool = False) -> N
 def build_parser() -> argparse.ArgumentParser:
     """The argument parser for every subcommand."""
     parser = argparse.ArgumentParser(prog="punch", description="A file-based issue tracker.")
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version('punchlist')}")
+    sub =parser.add_subparsers(dest="command", required=True)
 
     init = sub.add_parser("init", help=f"write a default {CONFIG_NAME} here")
     init.add_argument("--prefix", required=True, help="issue id prefix, e.g. pl for pl-7k3qx")

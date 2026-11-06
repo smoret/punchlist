@@ -1,10 +1,11 @@
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+# 1.27 is the first hatchling to write the PEP 639 license fields below.
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
 
 [project]
 name = "punchlist"
-version = "0.5.0"
+version = "0.6.0"
 description = "A file-based issue tracker: one markdown file per issue, in the project's own git repo"
 authors = [
     { name = "Steven Moret", email = "smoret@gmail.com" },
@@ -14,6 +15,25 @@ license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
+keywords = ["issue tracker", "git", "markdown", "cli", "agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Bug Tracking",
+]
+
+[project.urls]
+Homepage = "https://github.com/smoret/punchlist"
+Source = "https://github.com/smoret/punchlist"
+Issues = "https://github.com/smoret/punchlist/tree/main/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -26,13 +46,13 @@ dev = [
 punch = "punchlist.cli:main"
 punchlist = "punchlist.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["punchlist*"]
+[tool.hatch.build.targets.wheel]
+# Everything under the package ships, including static/board.html for `punch serve`.
+packages = ["src/punchlist"]
 
-[tool.setuptools.package-data]
-# The board page `punch serve` sends.
-punchlist = ["static/*.html"]
+[tool.hatch.build.targets.sdist]
+# The sdist is for building and testing the package, not the project's issues or docs.
+include = ["src", "tests", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

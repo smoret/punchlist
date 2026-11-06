@@ -2,9 +2,17 @@
 
 A small, file-based issue tracker for projects worked on by one developer and a crew of agents. Each issue is a markdown file with a short header, stored in the project's own git repo, so closing an issue lands in the same commit as the work that closed it. The `punch` CLI creates, lists, filters, and checks them.
 
-Status: early, and tracking its own work: planned work is in [issues/](issues/) (`punch list`).
+Status: early, and tracking its own work: planned work is in [issues/](https://github.com/smoret/punchlist/tree/main/issues) (`punch list`).
 
-## Setup
+## Install
+
+Needs Python 3.11 or later. `punch history` and `punch changed` read the repo's log, so they also need `git` on the PATH.
+
+```bash
+pipx install punchlist            # or: pip install punchlist
+```
+
+## Development
 
 ```bash
 python -m venv .venv
@@ -15,6 +23,7 @@ pip install -e ".[dev]"
 ## Usage
 
 ```bash
+punch --version                   # the installed version
 punch init --prefix pl            # write punchlist.json in the current directory
 punch init --prefix pl --line-endings lf   # write every file LF (default: the platform's)
 punch new "Title" --type task --category tooling   # prints the new id
@@ -62,17 +71,19 @@ created: 2026-10-18
 Markdown body.
 ```
 
-The header is `key: value` lines, values taken verbatim -- no quoting, no YAML. See [docs/design.md](docs/design.md) for the full rules.
+The header is `key: value` lines, values taken verbatim -- no quoting, no YAML. See [docs/design.md](https://github.com/smoret/punchlist/blob/main/docs/design.md) for the full rules.
 
 ## Documentation
 
+Links are absolute so they also work on the PyPI page.
+
 | File | Purpose |
 |---|---|
-| [CLAUDE.md](CLAUDE.md) | Conventions for agents working in this repo |
-| [issues/](issues/) | Planned work, as punchlist issues |
-| [docs/design.md](docs/design.md) | What was decided and why |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | The module map |
+| [CLAUDE.md](https://github.com/smoret/punchlist/blob/main/CLAUDE.md) | Conventions for agents working in this repo |
+| [issues/](https://github.com/smoret/punchlist/tree/main/issues) | Planned work, as punchlist issues |
+| [docs/design.md](https://github.com/smoret/punchlist/blob/main/docs/design.md) | What was decided and why |
+| [ARCHITECTURE.md](https://github.com/smoret/punchlist/blob/main/ARCHITECTURE.md) | The module map |
 
 ## License
 
-MIT; see [LICENSE](LICENSE).
+MIT; see [LICENSE](https://github.com/smoret/punchlist/blob/main/LICENSE).

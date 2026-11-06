@@ -4,6 +4,7 @@ title: test_history_diff fails intermittently
 type: bug
 status: open
 priority: low
+related: pl-nmsgn
 created: 2026-11-05
 ---
 
