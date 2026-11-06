@@ -14,6 +14,6 @@ Make punchlist installable with `pipx install punchlist` / `pip install punchlis
 - [x] Build backend: hatchling (less config than setuptools for a src layout; it picks up static/board.html without package-data)
 - [x] `[project.urls]`, classifiers, keywords
 - [x] README: absolute GitHub links (relative ones break on the PyPI page); user install section; git required on PATH
-- [ ] CI: tests on 3.11-3.14 for every push (requires-python >=3.11 is untested below 3.14)
+- [x] CI: tests on 3.11-3.14 for every push (requires-python >=3.11 is untested below 3.14)
 - [ ] Release workflow `release.yml`: build, then upload with trusted publishing on a `v*` tag; environments `pypi` and `testpypi`
 - [ ] Trial upload to TestPyPI, then a real 0.6.0 release

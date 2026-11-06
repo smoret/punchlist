@@ -39,7 +39,7 @@ This repo tracks its own work with `punch` (from `.venv`; config in `punchlist.j
 | `tests/` | pytest; fixtures build issue roots in `tmp_path`, never in the repo. Shared non-fixture helpers are in `tests/helpers.py` |
 | `tests/fixtures/` | Small synthetic input files (e.g. ROADMAP shapes for the importer) |
 | `docs/` | Durable design notes, one topic per file |
-| `.github/workflows/` | CI: `ci.yml` runs the tests on Python 3.11-3.14 across Linux, Windows, and macOS, plus the checks in "Verifying a change", on every push to main and every pull request |
+| `.github/workflows/` | `ci.yml` runs the tests on Python 3.11-3.14 across Linux, Windows, and macOS, plus the checks in "Verifying a change", on every push to main and every pull request. `release.yml` publishes to PyPI; see "Versioning" |
 | `tools/` | Dev-only scripts, if any are ever needed |
 | `temp/` | Scratch output; gitignored |
 
@@ -79,6 +79,7 @@ punch check                          # the repo's own issues
 - New feature or behavior change: minor (`0.1.0` -> `0.2.0`). Bug fix only: patch (`0.1.0` -> `0.1.1`). Below 1.0 a breaking change is also a minor bump; say it breaks in the commit message. A batch takes the largest bump any of its commits needs.
 - No bump for commits that don't change the package: issue files, docs, tests, config.
 - Name the version in the commit message: `Version 0.3.0: ...` on the commit that bumps it, `(0.3.0)` on later ones in the batch.
+- Publishing: once the batch is on main and CI is green, push a tag `v<version>` (`git tag v0.3.0 && git push origin v0.3.0`); `release.yml` builds and uploads it to PyPI, refusing a tag that doesn't match `pyproject.toml`. Running the workflow by hand (`gh workflow run release.yml`) uploads to TestPyPI instead. PyPI never accepts the same version twice, so a fix after publishing needs a new version.
 
 ## Working with collaborators
 
