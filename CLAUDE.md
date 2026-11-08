@@ -39,7 +39,7 @@ This repo tracks its own work with `punch` (from `.venv`; config in `punchlist.j
 | `tests/` | pytest; fixtures build issue roots in `tmp_path`, never in the repo. Shared non-fixture helpers are in `tests/helpers.py` |
 | `tests/fixtures/` | Small synthetic input files (e.g. ROADMAP shapes for the importer) |
 | `docs/` | Durable design notes, one topic per file |
-| `.github/workflows/` | `ci.yml` runs the tests on Python 3.11-3.14 across Linux, Windows, and macOS, plus the checks in "Verifying a change", on every push to main and every pull request. `release.yml` publishes to PyPI; see "Versioning" |
+| `.github/workflows/` | `ci.yml` runs the tests on Python 3.11-3.15 across Linux, Windows, and macOS, plus the checks in "Verifying a change", on every push to main and every pull request. `release.yml` publishes to PyPI; see "Versioning" |
 | `tools/` | Dev-only scripts, if any are ever needed |
 | `temp/` | Scratch output; gitignored |
 
