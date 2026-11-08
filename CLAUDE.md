@@ -70,6 +70,21 @@ python -m pyright src/punchlist
 punch check                          # the repo's own issues
 ```
 
+## Branches
+
+Work bigger than a commit or two goes on a branch and reaches main through a pull request, so main stays releasable and CI runs on every OS before merging. Branch names take a prefix, so they group by kind instead of crowding one flat namespace:
+
+| Prefix | For | Example |
+|---|---|---|
+| `feature/` | New behavior (a `feature` issue) | `feature/issue-times` |
+| `fix/` | A bug fix (a `bug` issue) | `fix/serve-unread-body` |
+| `chore/` | Docs, CI, dependencies, tooling: nothing that changes the package | `chore/branch-names` |
+| `dev/<name>/` | One developer's scratch or long-lived work | `dev/alex/board-spike` |
+
+- After the prefix, a short lowercase hyphenated name of the work, not the issue id: the id is in the issue file the branch closes.
+- Pushing a branch for a pull request isn't a release; "push only at release points" below is about main. A package-changing branch carries its version bump, and merging it is the release point.
+- Delete a branch once it's merged.
+
 ## Versioning
 
 `version` in `pyproject.toml` is the only version. **A version is a release, not a commit**: bump once per batch of work that reaches a downstream install, or downstream installs silently keep the old code -- pip treats an unchanged version as already installed, even when pointed at a newer commit.
