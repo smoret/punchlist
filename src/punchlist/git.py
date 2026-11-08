@@ -76,6 +76,44 @@ def require_history(root: Path) -> None:
                          "run `git fetch --unshallow` to get all of it")
 
 
+def has_history(root: Path) -> bool:
+    """Whether `root` is in a git work tree with its full history and at least one commit."""
+    try:
+        require_history(root)
+        _run(root, ["rev-parse", "--verify", "--quiet", "HEAD"])
+    except PunchError:
+        return False
+    return True
+
+
+def file_times(root: Path, pathspecs: list[str]) -> dict[str, tuple[int, int]]:
+    """Every path a commit touched under `pathspecs`, deleted ones too: the author times
+    (seconds since the epoch) of the first and last commits that did. A move counts as
+    a delete of one path and an add of the other."""
+    text: str = _run(root, ["log", f"--format={RECORD}%at", "-z", "--name-only", "--no-renames",
+                            "--relative", "--", *pathspecs]).decode("utf-8", "replace")
+    times: dict[str, tuple[int, int]] = {}
+    for record in text.split(RECORD)[1:]:
+        tokens: list[str] = record.split("\0")
+        time: int = int(tokens[0])
+        for token in tokens[1:]:
+            path: str = token.strip("\n")
+            if path:
+                first, last = times.get(path, (time, time))
+                times[path] = (min(first, time), max(last, time))
+    return times
+
+
+def uncommitted(root: Path, pathspecs: list[str]) -> set[str]:
+    """Paths under `pathspecs` that differ from HEAD, staged or not, or that git doesn't
+    track and doesn't ignore."""
+    changed: bytes = _run(root, ["diff", "HEAD", "--name-only", "-z", "--no-renames",
+                                 "--relative", "--", *pathspecs])
+    untracked: bytes = _run(root, ["ls-files", "-z", "--others", "--exclude-standard", "--",
+                                   *pathspecs])
+    return {p for p in (changed + untracked).decode("utf-8", "replace").split("\0") if p}
+
+
 def resolve_rev(root: Path, rev: str) -> str:
     """The full sha of the commit `rev` names; an error if it names none."""
     if rev.startswith("-"):  # would be read as an option

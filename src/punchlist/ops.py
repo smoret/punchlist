@@ -18,6 +18,7 @@ from .issue import (
     FieldValue, Issue, edit_body, edit_header, parse_issue, rank_error, read_issue, read_text,
     write_edits, write_issue,
 )
+from .times import IssueTimes, Times
 
 # A `set_fields` assignment: (field, operator, value), the operator "" for `=`, "+" or "-".
 Assignment = tuple[str, str, str]
@@ -43,6 +44,33 @@ def sort_key(config: Config, issue: Issue) -> tuple[int, bool, float, str, str]:
     level: int = config.priorities.index(priority) if priority else len(config.priorities)
     rank: float | None = issue.rank
     return (level, rank is None, rank or 0.0, issue.text("created") or "", issue.id)
+
+
+# What `list --sort` and the board's sort control offer. `rank` is `sort_key`; the
+# time orders are newest first.
+ORDERS: tuple[str, ...] = ("rank", "created", "updated")
+
+
+def ordered(config: Config, issues: list[Issue], order: str,
+            times: Times | None = None) -> list[Issue]:
+    """`issues` in `order`, one of ORDERS; the time orders need `times`.
+
+    `created` goes by the header's date first, so a backdated or imported issue keeps
+    the date it states, and by the time history gives within a day. `updated` goes by
+    the latest change, comments included.
+    """
+    if order not in ORDERS:
+        raise ValueError(f"unknown order {order!r}")
+    if order == "rank":
+        return sorted(issues, key=lambda i: sort_key(config, i))
+    if times is None:
+        raise ValueError(f"order {order!r} needs issue times")
+    none: IssueTimes = IssueTimes(0.0, 0.0)
+    if order == "created":
+        return sorted(issues, reverse=True, key=lambda i: (
+            i.text("created") or "", times.by_id.get(i.id, none).created, i.id))
+    return sorted(issues, reverse=True,
+                  key=lambda i: (times.by_id.get(i.id, none).updated, i.id))
 
 
 def is_blocked(issue: Issue, statuses: dict[str, str]) -> bool:

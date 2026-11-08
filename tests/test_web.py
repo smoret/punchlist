@@ -74,6 +74,18 @@ def test_board_lists_issues_with_card_details(board: Board, board_config: Config
     assert reply["version"] == _call(board, "GET", "/api/version")["version"]
 
 
+def test_board_has_times_and_time_orders(board: Board, board_config: Config) -> None:
+    _make(board_config, "pl-aaaaa", priority="high")
+    _make(board_config, "pl-bbbbb", priority="low", created="2026-02-01")
+    reply = _call(board, "GET", "/api/board")
+    assert reply["times_exact"] is False  # not a git repository: file times
+    assert [i["id"] for i in reply["issues"]] == ["pl-aaaaa", "pl-bbbbb"]  # rank order
+    assert reply["orders"]["created"] == ["pl-bbbbb", "pl-aaaaa"]
+    assert set(reply["orders"]) == {"created", "updated"}
+    assert all(i["created_at"].endswith("Z") and i["updated_at"].endswith("Z")
+               for i in reply["issues"])
+
+
 def test_issue_detail_has_blocks_and_comments(board: Board, board_config: Config) -> None:
     _make(board_config, "pl-aaaaa")
     _make(board_config, "pl-bbbbb", **{"depends-on": ["pl-aaaaa"]})
@@ -219,6 +231,19 @@ def test_move_to_another_lane(board: Board, board_config: Config) -> None:
           {"status": "progress", "expect_status": "open", "before": "pl-bbbbb"})
     moved = _issue(board_config, "pl-aaaaa")
     assert (moved.status, moved.text("rank")) == ("progress", "1")
+
+
+def test_move_keeping_rank_changes_only_the_status(board: Board, board_config: Config) -> None:
+    _make(board_config, "pl-aaaaa", rank="5")
+    _make(board_config, "pl-bbbbb", status="progress", rank="2")
+    _call(board, "POST", "/api/issues/aaaaa/move",
+          {"status": "progress", "expect_status": "open", "before": "pl-bbbbb",
+           "keep_rank": True})
+    moved = _issue(board_config, "pl-aaaaa")
+    assert (moved.status, moved.text("rank")) == ("progress", "5")
+    with pytest.raises(HttpError, match="keep_rank must be true or false"):
+        handle(board, "POST", "/api/issues/aaaaa/move",
+               {"status": "open", "expect_status": "progress", "before": None, "keep_rank": 1})
 
 
 def test_move_refuses_a_card_someone_else_moved(board: Board, board_config: Config) -> None:

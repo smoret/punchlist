@@ -30,8 +30,10 @@ from .errors import PunchError
 from .ids import resolve_id
 from .issue import Issue, load_issues, read_issue
 from .ops import (
-    Assignment, Conflict, create_issue, is_blocked, json_fields, set_body, set_fields, sort_key,
+    ORDERS, Assignment, Conflict, create_issue, is_blocked, json_fields, ordered, set_body,
+    set_fields, sort_key,
 )
+from .times import Times, issue_times, utc_text
 
 # A request body larger than this is refused; issue text is small.
 MAX_BODY = 1_000_000
@@ -112,13 +114,21 @@ def handle(board: Board, method: str, path: str, body: Any) -> tuple[HTTPStatus,
 
 def board_json(config: Config, author: str) -> dict[str, Any]:
     """Everything the page draws: the tracker's choices, and every issue with what a card
-    shows beyond its header (blocked, comment count)."""
+    shows beyond its header (blocked, comment count, created and updated times).
+
+    Issues come in rank order; `orders` lists their ids in each time order, so the page
+    sorts without repeating `ops.ordered`. `times_exact` is False when the times are only
+    file modification times (no git history)."""
     issues: list[Issue] = sorted(load_issues(config), key=lambda i: sort_key(config, i))
+    times: Times = issue_times(config)
     statuses: dict[str, str] = {issue.id: issue.status for issue in issues}
     rows: list[dict[str, Any]] = []
     for issue in issues:
         row: dict[str, Any] = {**json_fields(issue, config), "body": issue.body,
                                "comments": _comment_count(config, issue.id)}
+        if issue.id in times.by_id:
+            row["created_at"] = utc_text(times.by_id[issue.id].created)
+            row["updated_at"] = utc_text(times.by_id[issue.id].updated)
         if config.has_links:
             row["blocked"] = is_blocked(issue, statuses)
             row["waiting"] = [d for d in issue.items(DEPENDS_ON) if statuses.get(d) != "closed"]
@@ -133,6 +143,9 @@ def board_json(config: Config, author: str) -> dict[str, Any]:
         "name": config.root.name,
         "author": author,
         "issues": rows,
+        "orders": {order: [i.id for i in ordered(config, issues, order, times)]
+                   for order in ORDERS if order != "rank"},
+        "times_exact": times.exact,
         "version": version(config),
     }
 
@@ -155,13 +168,18 @@ def move(config: Config, issue_id: str, request: dict[str, Any]) -> None:
     `before` (a card id), or at the end of the lane when `before` is null.
 
     `expect_status` is the lane the page saw the card in; if the file says otherwise,
-    someone else moved it first and nothing is written (`Conflict`).
+    someone else moved it first and nothing is written (`Conflict`). With `keep_rank`
+    true, only the status changes: the page is sorted by time, so where the card was
+    dropped says nothing about its rank.
     """
     status: str = _text(request, "status")
     expected: str = _text(request, "expect_status")
     before: Any = request.get("before")
     if before is not None and not isinstance(before, str):
         raise HttpError(HTTPStatus.BAD_REQUEST, "before must be an issue id or null")
+    keep_rank: Any = request.get("keep_rank", False)
+    if not isinstance(keep_rank, bool):
+        raise HttpError(HTTPStatus.BAD_REQUEST, "keep_rank must be true or false")
     error: str | None = config.choice_error("status", status)
     if error is not None:
         raise PunchError(error)
@@ -169,8 +187,8 @@ def move(config: Config, issue_id: str, request: dict[str, Any]) -> None:
     moved: Issue = next(i for i in issues if i.id == issue_id)
     if moved.status != expected:
         raise Conflict(f"{issue_id} status is now {moved.status}, not {expected}")
-    ranks: dict[str, str] = place(config, issues, moved, status,
-                                  resolve_id(config, before) if before else None)
+    ranks: dict[str, str] = {} if keep_rank else place(
+        config, issues, moved, status, resolve_id(config, before) if before else None)
     changes: list[Assignment] = [("rank", "", ranks.pop(issue_id))] if issue_id in ranks else []
     if status != moved.status:
         changes.append(("status", "", status))

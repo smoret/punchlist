@@ -2,7 +2,7 @@
 id: pl-wntja
 title: Board and list: show and sort by created and updated times
 type: feature
-status: open
+status: closed
 priority: medium
 labels: board
 created: 2026-11-08
