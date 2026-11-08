@@ -83,6 +83,7 @@ Work bigger than a commit or two goes on a branch and reaches main through a pul
 
 - After the prefix, a short lowercase hyphenated name of the work, not the issue id: the id is in the issue file the branch closes.
 - A branch never touches the version; see "Versioning".
+- Merge with a merge commit, not a squash, so the branch's own commits (and the issues they close) survive. The repository's merge commit takes the pull request's title and description, so write the description as that commit's message: what changed and why, and anything that breaks.
 - Delete a branch once it's merged.
 
 ## Versioning
