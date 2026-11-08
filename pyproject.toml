@@ -1,11 +1,12 @@
 [build-system]
 # 1.27 is the first hatchling to write the PEP 639 license fields below.
-requires = ["hatchling>=1.27"]
+# hatch-vcs reads the version from git tags; see [tool.hatch.version].
+requires = ["hatchling>=1.27", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "punchlist"
-version = "0.6.1"
+dynamic = ["version"]
 description = "A file-based issue tracker: one markdown file per issue, in the project's own git repo"
 authors = [
     { name = "Steven Moret", email = "smoret@gmail.com" },
@@ -46,6 +47,15 @@ dev = [
 [project.scripts]
 punch = "punchlist.cli:main"
 punchlist = "punchlist.cli:main"
+
+[tool.hatch.version]
+# A commit tagged v0.7.0 builds as 0.7.0; the third commit after it as 0.7.1.dev3,
+# so every commit installs as a newer version than the last.
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+# No `+g<sha>` suffix: PyPI and TestPyPI refuse local versions.
+local_scheme = "no-local-version"
 
 [tool.hatch.build.targets.wheel]
 # Everything under the package ships, including static/board.html for `punch serve`.

@@ -15,12 +15,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the tags, which the version is built from
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - run: python -m pip install build
       - run: python -m build
-      # Fail closed: a tag that disagrees with pyproject.toml's version publishes nothing.
+      # Fail closed: a build whose version isn't the tag's (say, the tag wasn't fetched)
+      # publishes nothing.
       - name: Check the wheel installs and matches the tag
         run: |
           python -m pip install dist/*.whl
