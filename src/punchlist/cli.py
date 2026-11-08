@@ -36,9 +36,10 @@ from .issue import (
     update_issue, write_issue,
 )
 from .ops import (
-    Assignment, SetResult, create_issue, is_blocked, json_fields, resolve_author, set_fields,
-    sort_key,
+    ORDERS, Assignment, SetResult, create_issue, is_blocked, json_fields, ordered,
+    resolve_author, set_fields, sort_key,
 )
+from .times import Times, issue_times, utc_text
 from .web import BoardServer, make_server
 
 # `serve` listens here unless told otherwise: fixed, so a bookmark keeps working.
@@ -97,7 +98,9 @@ def cmd_list(args: argparse.Namespace) -> int:
     """Print matching issues, one line each: id status type priority category title."""
     config: Config = _load()
     everything: list[Issue] = _load_all(config)
-    _print_issues(config, _select(config, everything, args, everything), args.json)
+    selected: list[Issue] = _select(config, everything, args, everything)
+    times: Times | None = None if args.sort == "rank" else issue_times(config)
+    _print_issues(config, ordered(config, selected, args.sort, times), args.json, times=times)
     return 0
 
 
@@ -116,10 +119,12 @@ def cmd_search(args: argparse.Namespace) -> int:
         if pattern.search(issue.title) or pattern.search(issue.body)
     ]
     selected: list[Issue] = _select(config, hits, args, everything)
+    times: Times | None = None if args.sort == "rank" else issue_times(config)
+    selected = ordered(config, selected, args.sort, times)
     snippets: dict[str, list[Snippet]] | None = None
     if args.context is not None:
         snippets = {issue.id: _snippets(issue, pattern, args.context) for issue in selected}
-    _print_issues(config, selected, args.json, snippets)
+    _print_issues(config, selected, args.json, snippets, times)
     return 0
 
 
@@ -202,17 +207,22 @@ def _select(config: Config, issues: list[Issue], args: argparse.Namespace,
 
 
 def _print_issues(config: Config, issues: list[Issue], as_json: bool,
-                  snippets: dict[str, list[Snippet]] | None = None) -> None:
+                  snippets: dict[str, list[Snippet]] | None = None,
+                  times: Times | None = None) -> None:
     """One line per issue (id status type priority category title), or a JSON array.
 
     With `snippets`, each issue's lines follow it grep-style: `  12: match`,
     `  13- context`, and `  --` between groups that aren't adjacent; in JSON
-    they are a `matches` array.
+    they are a `matches` array. With `times`, JSON rows add `created_at` and
+    `updated_at`.
     """
     if as_json:
         rows: list[dict[str, object]] = []
         for issue in issues:
             row: dict[str, object] = dict(json_fields(issue, config))
+            if times is not None and issue.id in times.by_id:
+                row["created_at"] = utc_text(times.by_id[issue.id].created)
+                row["updated_at"] = utc_text(times.by_id[issue.id].updated)
             if snippets is not None:
                 row["matches"] = [
                     {"line": s.line, "text": s.text, "match": s.match} for s in snippets[issue.id]
@@ -647,6 +657,14 @@ def _add_filters(parser: argparse.ArgumentParser, any_status: bool = False) -> N
                            help=f"only issues waiting on a {DEPENDS_ON} issue that isn't closed")
 
 
+def _add_sort(parser: argparse.ArgumentParser) -> None:
+    """`--sort`, which `list` and `search` share; `ops.ordered` applies it."""
+    parser.add_argument(
+        "--sort", choices=list(ORDERS), default="rank",
+        help="rank: priority, then rank (default); created, updated: newest first, "
+             "times from git; with --json, rows add created_at and updated_at")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The argument parser for every subcommand."""
     parser = argparse.ArgumentParser(prog="punch", description="A file-based issue tracker.")
@@ -680,6 +698,7 @@ def build_parser() -> argparse.ArgumentParser:
         "list", help="list unclosed issues: id status type priority category title"
     )
     _add_filters(lst)
+    _add_sort(lst)
     lst.add_argument("--json", action="store_true", help="a JSON array of header fields")
     lst.set_defaults(func=cmd_list)
 
@@ -696,6 +715,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="under each hit, its matching body lines with line numbers and N lines either side",
     )
     _add_filters(search)
+    _add_sort(search)
     search.add_argument("--json", action="store_true", help="a JSON array of header fields")
     search.set_defaults(func=cmd_search)
 

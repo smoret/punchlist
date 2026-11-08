@@ -9,7 +9,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 import pytest
-from helpers import write_raw
+from helpers import commit, git, write_raw
 
 from punchlist.cli import main
 from punchlist.config import CONFIG_NAME, Config, default_config, load_config
@@ -269,6 +269,24 @@ def test_list_json(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
         '[{"id": "pl-low01", "title": "Low child", "type": "task", "status": "open", '
         '"priority": "low", "parent": "pl-epic1", "labels": ["a", "b"], "created": "2026-01-01"}]\n'
     )
+
+
+def test_list_and_search_sort_by_time(sample: Config, capsys: pytest.CaptureFixture[str]) -> None:
+    git(sample.root, "init", "-q")
+    commit(sample.root, "Add", "2026-03-01T10:00:00+00:00")
+    path: Path = sample.issue_path("pl-none1")
+    path.write_text(path.read_text(encoding="utf-8").replace("No priority", "Edited"),
+                    encoding="utf-8")
+    commit(sample.root, "Edit", "2026-03-02T10:00:00+00:00")
+    # created: header date first (pl-none1 is the oldest); updated: the latest commit.
+    assert _list(capsys, "--sort", "created") == ["pl-low01", "pl-high1", "pl-epic1", "pl-none1"]
+    assert _list(capsys, "--sort", "updated")[0] == "pl-none1"
+    assert main(["search", "edited", "--sort", "updated", "--json"]) == 0
+    [row] = json.loads(capsys.readouterr().out)
+    assert (row["created_at"], row["updated_at"]) == ("2026-03-01T10:00:00Z",
+                                                      "2026-03-02T10:00:00Z")
+    assert main(["list", "--json"]) == 0
+    assert "updated_at" not in capsys.readouterr().out  # rank order reads no times
 
 
 def test_list_empty(in_root: Path, capsys: pytest.CaptureFixture[str]) -> None:

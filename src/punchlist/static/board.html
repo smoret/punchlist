@@ -121,6 +121,11 @@ textarea { width: 100%; min-height: 70px; padding: 8px; border: 1px solid var(--
     <select id="f-type" aria-label="Type"></select>
     <select id="f-category" aria-label="Category"></select>
     <select id="f-label" aria-label="Label"></select>
+    <select id="sort" aria-label="Sort cards">
+      <option value="rank">Sort: rank</option>
+      <option value="created">Sort: newest</option>
+      <option value="updated">Sort: recently updated</option>
+    </select>
   </div>
 </header>
 <p class="status" id="status">Loading&hellip;</p>
@@ -134,6 +139,18 @@ let dragging = null;       // the card being dragged: {id, status}
 let openId = null;         // the issue shown in the drawer
 const expanded = new Set(); // collapsed-by-default lanes the user opened
 const filters = { q: "", type: "", category: "", label: "" };
+const SORTS = ["rank", "created", "updated"];
+let sortBy = remembered("punch.sort", SORTS) || "rank";  // a time order sorts lanes newest first
+
+// A per-viewer setting from the browser's storage; null when absent, unknown, or blocked.
+function remembered(key, allowed) {
+  try { const v = localStorage.getItem(key); return allowed.includes(v) ? v : null; }
+  catch (e) { return null; }
+}
+
+function remember(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* private window: not kept */ }
+}
 
 function el(tag, props, ...children) {
   const node = document.createElement(tag);
@@ -199,6 +216,11 @@ function fillFilters() {
   fill("f-type", "type", c.types);
   fill("f-category", "category", c.categories);
   fill("f-label", "label", labels);
+  const sort = document.getElementById("sort");
+  sort.value = sortBy;
+  sort.title = data.times_exact ? "" : "No git history here, so times are file modification times";
+  sort.querySelector('[value="updated"]').textContent =
+    "Sort: recently updated" + (data.times_exact ? "" : " (file times)");
   document.getElementById("name").textContent = data.name + " board";
   document.title = data.name + " board";
 }
@@ -220,8 +242,10 @@ function render() {
   const board = document.getElementById("board");
   const statuses = data.config.statuses;
   const counts = [];
+  const order = sortBy === "rank" ? null : new Map(data.orders[sortBy].map((id, n) => [id, n]));
+  const issues = order ? [...data.issues].sort((a, b) => order.get(a.id) - order.get(b.id)) : data.issues;
   board.replaceChildren(...statuses.map((status, n) => {
-    const all = data.issues.filter(i => i.status === status);
+    const all = issues.filter(i => i.status === status);
     const shown = all.filter(visible);
     counts.push(all.length + " " + laneName(status));
     const collapsed = status === "closed" && !expanded.has(status);
@@ -254,6 +278,41 @@ function note(body) {
   return para.replace(/^#+\s*/, "").replace(/\s*\n\s*/g, " ");
 }
 
+// How long ago a time (ms) was, in one short unit: "now", "5m", "3h", "4d", "2w", "5mo", "2y".
+function ago(ms) {
+  const s = Math.max(0, (Date.now() - ms) / 1000), day = 86400;
+  if (s < 60) return "now";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  if (s < day) return Math.floor(s / 3600) + "h";
+  if (s < 14 * day) return Math.floor(s / day) + "d";
+  if (s < 60 * day) return Math.floor(s / (7 * day)) + "w";
+  if (s < 730 * day) return Math.floor(s / (30.44 * day)) + "mo";
+  return Math.floor(s / (365.25 * day)) + "y";
+}
+
+function localDate(d) {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+// When an issue was created: the header's date, made exact by history when they agree on the
+// day. A backdated or imported issue keeps the date it states.
+function createdMs(issue) {
+  const at = issue.created_at ? new Date(issue.created_at) : null;
+  return at && localDate(at) === issue.created ? at.getTime() : new Date(issue.created + "T00:00:00").getTime();
+}
+
+// "created 3d, updated 2h" (the update only when it reads differently), full times on hover.
+function whenEl(issue) {
+  const created = createdMs(issue);
+  const updated = issue.updated_at ? Date.parse(issue.updated_at) : null;
+  const later = updated != null && ago(updated) !== ago(created);
+  const tip = "created " + (issue.created_at && localDate(new Date(issue.created_at)) === issue.created
+    ? new Date(created).toLocaleString() : issue.created)
+    + (updated != null ? "\nupdated " + new Date(updated).toLocaleString() : "");
+  return el("span", { class: "when", title: tip,
+    text: "created " + ago(created) + (later ? ", updated " + ago(updated) : "") });
+}
+
 function cardEl(issue) {
   const meta = el("div", { class: "meta" },
     el("span", { class: "id", text: issue.id }),
@@ -261,7 +320,8 @@ function cardEl(issue) {
     issue.priority ? el("span", { class: "prio-" + issue.priority, text: issue.priority }) : null,
     issue.category ? el("span", { class: "chip", text: issue.category }) : null,
     ...(issue.labels || []).map(l => el("span", { class: "chip", text: "#" + l })),
-    issue.comments ? el("span", { title: issue.comments + " comments", text: "\u{1F4AC} " + issue.comments }) : null);
+    issue.comments ? el("span", { title: issue.comments + " comments", text: "\u{1F4AC} " + issue.comments }) : null,
+    whenEl(issue));
   const card = el("button", { class: "card", draggable: "true", "data-id": issue.id,
     onclick: () => openDrawer(issue.id) },
     el("span", { class: "title", text: issue.title }),
@@ -296,6 +356,7 @@ function wireDrop(lane, cards, status) {
     if (!dragging) return;
     e.preventDefault();
     clearMarkers(); lane.classList.add("over");
+    if (sortBy !== "rank") return;  // sorted by time: a drop sets the status, not a place
     const before = cardBelow(cards, e.clientY);
     const marker = el("div", { class: "marker" });
     before ? cards.insertBefore(marker, before) : cards.append(marker);
@@ -307,13 +368,15 @@ function wireDrop(lane, cards, status) {
     const before = cardBelow(cards, e.clientY);
     const moved = dragging;
     clearMarkers(); dragging = null;
+    if (sortBy !== "rank" && moved.status === status) return;  // nothing to change
     await moveCard(moved.id, moved.status, status, before ? before.dataset.id : null);
   });
 }
 
 async function moveCard(id, from, to, before) {
   try {
-    await api("POST", "/api/issues/" + id + "/move", { status: to, expect_status: from, before });
+    await api("POST", "/api/issues/" + id + "/move",
+      { status: to, expect_status: from, before, keep_rank: sortBy !== "rank" });
   } catch (e) {
     toast(e.status === 409 ? "Someone else changed " + id + " first; the board has been refreshed." : e.message);
   }
@@ -339,6 +402,12 @@ function quickAdd(lane, status) {
   input.addEventListener("keydown", e => { if (e.key === "Escape") form.remove(); });
   lane.querySelector("h2").after(form);
   input.focus();
+}
+
+// The board's times for an issue (the drawer's own reply has none).
+function timesOf(id) {
+  const row = data.issues.find(i => i.id === id);
+  return row ? { created_at: row.created_at, updated_at: row.updated_at } : {};
 }
 
 async function openDrawer(id) { openId = id; await refreshDrawer(); }
@@ -438,7 +507,7 @@ async function refreshDrawer() {
   drawer.replaceChildren(
     el("div", { class: "head" }, title, el("button", { class: "icon", text: "Close", onclick: closeDrawer })),
     el("div", { class: "meta" }, el("span", { class: "id", text: issue.id }),
-      el("span", { text: "created " + issue.created })),
+      whenEl({ ...issue, ...timesOf(issue.id) })),
     el("div", { class: "fields" },
       ...choice("status", c.statuses, false), ...choice("type", c.types, false),
       ...choice("priority", c.priorities, true), ...choice("category", c.categories, true),
@@ -457,6 +526,9 @@ async function refreshDrawer() {
 
 document.addEventListener("keydown", e => { if (e.key === "Escape" && openId && !document.querySelector(".quick")) closeDrawer(); });
 document.getElementById("q").addEventListener("input", e => { filters.q = e.target.value; render(); });
+document.getElementById("sort").addEventListener("change", e => {
+  sortBy = e.target.value; remember("punch.sort", sortBy); render();
+});
 for (const k of ["type", "category", "label"]) {
   document.getElementById("f-" + k).addEventListener("change", e => { filters[k] = e.target.value; render(); });
 }
