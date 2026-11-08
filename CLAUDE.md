@@ -82,19 +82,17 @@ Work bigger than a commit or two goes on a branch and reaches main through a pul
 | `dev/<name>/` | One developer's scratch or long-lived work | `dev/alex/board-spike` |
 
 - After the prefix, a short lowercase hyphenated name of the work, not the issue id: the id is in the issue file the branch closes.
-- Pushing a branch for a pull request isn't a release; "push only at release points" below is about main. A package-changing branch carries its version bump, and merging it is the release point.
+- A branch never touches the version; see "Versioning".
 - Delete a branch once it's merged.
 
 ## Versioning
 
-`version` in `pyproject.toml` is the only version. **A version is a release, not a commit**: bump once per batch of work that reaches a downstream install, or downstream installs silently keep the old code -- pip treats an unchanged version as already installed, even when pointed at a newer commit.
+**The version is the git tag; no file holds it.** `hatch-vcs` builds it at install time: a commit tagged `v0.7.0` is `0.7.0`, and the third commit after it is `0.7.1.dev3`. So no commit edits a version, branches never conflict over one, and every commit installs as newer than the last -- pip skips a reinstall when the version is unchanged, which is what a stored version made people remember to bump.
 
-- The first commit that changes what the installed package does after the last pushed version bumps it; later package commits before the next push don't. Check with `git log origin/main..main`: if a bump is already in there, don't bump again.
-- Push only at release points, when the batch is done: a pushed mid-batch commit carries a version that later commits will also claim.
-- New feature or behavior change: minor (`0.1.0` -> `0.2.0`). Bug fix only: patch (`0.1.0` -> `0.1.1`). Below 1.0 a breaking change is also a minor bump; say it breaks in the commit message. A batch takes the largest bump any of its commits needs.
-- No bump for commits that don't change the package: issue files, docs, tests, config.
-- Name the version in the commit message: `Version 0.3.0: ...` on the commit that bumps it, `(0.3.0)` on later ones in the batch.
-- Publishing: once the batch is on main and CI is green, push a tag `v<version>` (`git tag v0.3.0 && git push origin v0.3.0`); `release.yml` builds and uploads it to PyPI, refusing a tag that doesn't match `pyproject.toml`. Running the workflow by hand (`gh workflow run release.yml`) uploads to TestPyPI instead. PyPI never accepts the same version twice, so a fix after publishing needs a new version.
+- **A release is a tag.** When main holds what should ship and CI is green, choose the version from what merged since the last tag (`punch changed v0.6.1` lists it), tag main, and push the tag: `git tag v0.7.0 && git push origin v0.7.0`. `release.yml` builds and uploads it to PyPI, and refuses a build whose version isn't the tag's.
+- New feature or behavior change: minor (`0.6.1` -> `0.7.0`). Bug fixes only: patch (`0.6.1` -> `0.6.2`). Below 1.0 a breaking change is also a minor bump; say it breaks in the pull request and the commit that merges it.
+- Running the workflow by hand (`gh workflow run release.yml`) uploads the current dev version to TestPyPI instead. PyPI never accepts the same version twice, so a fix after publishing needs a new tag.
+- Read the version with `punch --version`, or `git describe --tags` in the repo. An installed copy only learns of a new tag when reinstalled, so reinstall after tagging to see it.
 
 ## Working with collaborators
 
